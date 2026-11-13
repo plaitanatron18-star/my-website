@@ -1,0 +1,880 @@
+<!DOCTYPE html>
+<html lang="th">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>ระบบจำลองสอบนายสิบตำรวจ สายอำนวยการ 2569</title>
+<script src="https://cdn.tailwindcss.com"></script>
+<script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.1/dist/chart.umd.min.js"></script>
+<link href="https://fonts.googleapis.com/css2?family=Sarabun:wght@400;600;700&family=Prompt:wght@500;700&display=swap" rel="stylesheet">
+<script>
+tailwind.config = { theme: { extend: {
+  colors: {
+    navy:   { DEFAULT:'#0B1F3A', light:'#16325C', dark:'#06142A' },
+    maroon: { DEFAULT:'#7A1F2B', light:'#9B2C3B' },
+    khaki:  { DEFAULT:'#C3B091', light:'#EDE5D2', dark:'#8F7C5A' },
+    gold:   { DEFAULT:'#C9A227', light:'#E6C65C' }
+  },
+  fontFamily: { sans:['Sarabun','sans-serif'], head:['Prompt','sans-serif'] }
+}}};
+</script>
+<style>
+  body{background:#F5F1E8}
+  .choice-btn{transition:all .15s ease}
+  .card{background:#fff;border-radius:1rem;box-shadow:0 4px 18px rgba(11,31,58,.08);border:1px solid #E5DCC6}
+  .pre{white-space:pre-line}
+  .stripe{background:repeating-linear-gradient(45deg,#0B1F3A,#0B1F3A 12px,#0F2747 12px,#0F2747 24px)}
+  .inp{width:100%;border:1px solid #D9CBA8;border-radius:.6rem;padding:.55rem .75rem;background:#fff;color:#0B1F3A}
+  .inp:focus{outline:none;border-color:#C9A227;box-shadow:0 0 0 2px rgba(201,162,39,.25)}
+  .inp.ans{border-color:#059669;box-shadow:0 0 0 1px #059669}
+  .lbl{display:block;font-size:.85rem;font-weight:600;margin-bottom:.3rem}
+  .btn-o{background:#fff;border:1px solid #D9CBA8;border-radius:.6rem;padding:.5rem 1rem;font-weight:600}
+  .btn-o:hover{background:#EDE5D2}
+</style>
+</head>
+<body class="font-sans text-navy min-h-screen">
+
+<header class="bg-navy text-white shadow-lg border-b-4 border-gold sticky top-0 z-40">
+  <div class="max-w-6xl mx-auto px-4 py-3 flex flex-wrap items-center justify-between gap-2">
+    <div class="flex items-center gap-3 cursor-pointer" onclick="go('dashboard')">
+      <div class="w-11 h-11 rounded-full bg-gold flex items-center justify-center text-navy font-bold text-2xl shadow-inner">★</div>
+      <div>
+        <div class="font-head font-bold text-lg leading-tight">POLICE NCO PREP 2569</div>
+        <div class="text-xs text-khaki-light">ระบบจำลองสอบนายสิบตำรวจ สายอำนวยการ</div>
+      </div>
+    </div>
+    <nav id="nav" class="flex flex-wrap gap-1 text-sm">
+      <button data-r="dashboard" onclick="go('dashboard')" class="px-3 py-1.5 rounded-lg hover:bg-navy-light">แดชบอร์ด</button>
+      <button data-r="exam" onclick="go('exam')" class="px-3 py-1.5 rounded-lg hover:bg-navy-light">ห้องสอบ</button>
+      <button data-r="bookmarks" onclick="go('bookmarks')" class="px-3 py-1.5 rounded-lg hover:bg-navy-light">ข้อที่บันทึกไว้</button>
+      <button data-r="admin" onclick="go('admin')" class="px-3 py-1.5 rounded-lg hover:bg-navy-light">หลังบ้าน 🔒</button>
+    </nav>
+  </div>
+</header>
+
+<main id="app" class="max-w-6xl mx-auto p-4 pb-16"></main>
+<div id="modal"></div>
+<footer class="text-center text-xs text-khaki-dark pb-6">ข้อมูลทั้งหมดเก็บในเบราว์เซอร์ของคุณ (LocalStorage) • ควร Backup เป็นประจำ</footer>
+
+<script>
+/* =====================================================================
+   1) CONFIG
+   ===================================================================== */
+const SUBJECTS = {
+  math:    { name:'ความสามารถทั่วไป (คำนวณ/คณิตศาสตร์)', short:'คำนวณ',         code:'GEN', part:'A', quota:20 },
+  thai:    { name:'ภาษาไทย',                             short:'ภาษาไทย',       code:'THA', part:'A', quota:20 },
+  it:      { name:'เทคโนโลยีสารสนเทศและคอมพิวเตอร์เพื่อสำนักงาน', short:'IT/คอมพิวเตอร์', code:'IT', part:'B', quota:40 },
+  saraban: { name:'งานสารบรรณ',                          short:'สารบรรณ',       code:'SAR', part:'B', quota:30 },
+  law:     { name:'กฎหมายที่เกี่ยวข้อง',                   short:'กฎหมาย',        code:'LAW', part:'B', quota:25 },
+  english: { name:'ภาษาอังกฤษ',                          short:'อังกฤษ',        code:'ENG', part:'B', quota:15 }
+};
+const PARTS = { A:{ name:'ภาคความรู้ความสามารถทั่วไป', total:40 }, B:{ name:'ภาคความรู้ความสามารถที่ใช้เฉพาะตำแหน่ง', total:110 } };
+const PASS_RATIO = 0.60, TARGET_RATIO = 0.80;
+const INTERVAL_DAYS = [0,1,2,4,7,15];
+const LABELS = ['ก','ข','ค','ง'];
+const DIFF = {1:'ง่าย',2:'กลาง',3:'ยาก'};
+const K = { bank:'nco_bank', settings:'nco_settings', stats:'nco_stats', bm:'nco_bm', hist:'nco_hist', session:'nco_session', last:'nco_last' };
+const DEFAULT_SETTINGS = { name:'', examDate:'2026-11-29', examTime:'09:00', mockMinutes:180, reviewMock:0.15, reviewPractice:0.25, pin:'2569' };
+
+const TIPS = {
+  math:'ฝึกโจทย์ร้อยละ ส่วนลด อัตราส่วน อนุกรม ความเร็ว วันละ 20 ข้อ จับเวลาข้อละไม่เกิน 1 นาที ข้อไหนเกิน 2 นาทีให้ข้ามก่อน',
+  thai:'ท่องคำที่มักเขียนผิด ราชาศัพท์ ลักษณนาม สำนวน และชนิดของคำ ส่วนนี้จำได้ก็ตอบได้ทันที ควรเก็บให้ได้ 16 ข้อขึ้นไป',
+  it:'วิชานี้มีสัดส่วนสูงสุด 40 ข้อ ทวนปุ่มลัด Word/Excel ฟังก์ชัน Excel หน่วยความจำ ฮาร์ดแวร์ ภัยไซเบอร์ และควรเก็บให้ได้ 32 ข้อขึ้นไป',
+  saraban:'อ่านระเบียบสำนักนายกรัฐมนตรีว่าด้วยงานสารบรรณ พ.ศ. 2526 และที่แก้ไขเพิ่มเติม ท่องตัวเลข ชนิดหนังสือ ชั้นความเร็ว ชั้นความลับ และการเก็บ/ทำลายหนังสือ',
+  law:'ทวนรัฐธรรมนูญ 2560, พ.ร.บ.ตำรวจแห่งชาติ 2565, ป.อาญา/ป.พ.พ. เบื้องต้น, พ.ร.บ.ข้อมูลข่าวสาร 2540, วิธีปฏิบัติราชการทางปกครอง 2539 และ PDPA 2562',
+  english:'ทบทวน Tense, Part of speech, Vocabulary งานสำนักงาน/ตำรวจ และบทสนทนา ข้อสอบมี 15 ข้อ ทำให้ได้ 10 ข้อขึ้นไป'
+};
+const QUOTES = ['วินัยวันนี้ คือเครื่องแบบในวันหน้า','อ่านวันละนิด แต่ห้ามขาดแม้แต่วันเดียว','คู่แข่งกำลังอ่านอยู่ แล้วคุณล่ะ?','ข้อที่เคยผิด คือคะแนนที่รอให้เก็บ','เป้าหมาย 120+ ไม่ใช่แค่ผ่าน แต่ต้องติด!'];
+
+/* =====================================================================
+   2) SEED BANK — ใช้ครั้งแรกเท่านั้น หลังจากนั้นแก้ไขได้ในหลังบ้าน
+   ===================================================================== */
+const SEED = [
+ {id:'S1-GEN-001',set:1,subject:'math',difficulty:2,question:'จงหาจำนวนถัดไปของอนุกรม 2, 6, 12, 20, 30, ...',choices:['42','40','36','44'],answer:0,explanation:'ผลต่างเพิ่มขึ้นทีละ 2 คือ +4, +6, +8, +10 ตัวถัดไปจึงต้องบวก 12\n30 + 12 = 42\nอีกวิธี: รูปแบบ n(n+1) → 1×2, 2×3, 3×4, 4×5, 5×6, 6×7 = 42'},
+ {id:'S1-GEN-002',set:1,subject:'math',difficulty:1,question:'สินค้าราคาป้าย 800 บาท ร้านลดราคา 15% ผู้ซื้อต้องจ่ายเงินกี่บาท',choices:['680','685','700','120'],answer:0,explanation:'ลด 15% เท่ากับจ่าย 85%\n800 × 0.85 = 680 บาท\nตัวหลอก 120 คือจำนวน "ส่วนลด" ไม่ใช่ราคาที่ต้องจ่าย'},
+ {id:'S1-GEN-003',set:1,subject:'math',difficulty:2,question:'A ทำงานคนเดียวเสร็จใน 6 วัน B ทำคนเดียวเสร็จใน 3 วัน ถ้าทำพร้อมกันจะเสร็จในกี่วัน',choices:['2','4.5','3','1.5'],answer:0,explanation:'ใน 1 วัน A ทำได้ 1/6 งาน B ทำได้ 1/3 = 2/6 งาน\nรวมกันได้ 3/6 = 1/2 งานต่อวัน จึงเสร็จใน 2 วัน\nสูตรลัด: (6×3) ÷ (6+3) = 18 ÷ 9 = 2'},
+ {id:'TH001',set:0,subject:'thai',question:'คำใดเขียนถูกต้องตามพจนานุกรมฉบับราชบัณฑิตยสถาน',choices:['อนุญาต','อนุญาติ','อนุญาตย์','อนุยาต'],answer:0,explanation:'"อนุญาต" ไม่มีสระอิ ให้จำว่า อนุญาต ไม่มี อิ แต่ "ญาติ" มี อิ ข้อสอบชอบเอาสองคำนี้มาหลอกคู่กัน'},
+ {id:'TH002',set:0,subject:'thai',question:'คำใดสะกดผิด',choices:['โอกาศ','สังเกต','กะเพรา','ลายเซ็น'],answer:0,explanation:'ที่ถูกคือ "โอกาส" ใช้ ส เสือ (มาจากบาลี)\n• สังเกต: ไม่มีการันต์\n• กะเพรา: มี ร\n• ลายเซ็น: ใช้ น สะกด'},
+ {id:'TH003',set:0,subject:'thai',question:'ข้อใดเป็นคำซ้อน',choices:['ข้าวของ','แม่น้ำ','ลูกเสือ','น้ำแข็ง'],answer:0,explanation:'คำซ้อนเกิดจากคำที่ความหมายคล้ายกันมาซ้อนกัน "ข้าว + ของ" หมายถึงสิ่งของทั่วไป\nส่วนแม่น้ำ ลูกเสือ น้ำแข็ง เป็นคำประสม'},
+ {id:'TH004',set:0,subject:'thai',question:'ลักษณนามของ "ร่ม" คือข้อใด',choices:['คัน','อัน','ด้าม','ใบ'],answer:0,explanation:'ร่มใช้ลักษณนาม "คัน" (สิ่งที่มีด้ามหรือก้านยาว เช่น ร่ม คันเบ็ด ช้อน)\nตัวหลอก: "ด้าม" ใช้กับปากกา มีด'},
+ {id:'TH005',set:0,subject:'thai',question:'สำนวน "น้ำขึ้นให้รีบตัก" มีความหมายตรงกับข้อใด',choices:['มีโอกาสให้รีบทำ','ทำอะไรให้รอบคอบ','อย่าโลภมาก','ขยันแล้วจะร่ำรวย'],answer:0,explanation:'หมายถึงเมื่อมีโอกาสดีให้รีบฉวยไว้ เพราะโอกาสไม่ได้มีตลอดเวลา'},
+ {id:'TH006',set:0,subject:'thai',question:'คำราชาศัพท์ "เสวย" ตรงกับคำสามัญในข้อใด',choices:['กิน','นอน','อาบน้ำ','พูด'],answer:0,explanation:'เสวย = กิน\nจุดหลอกที่ออกบ่อย: สำหรับพระสงฆ์ใช้ "ฉัน" นอน = บรรทม อาบน้ำ = สรงน้ำ'},
+ {id:'TH007',set:0,subject:'thai',question:'คำใดเป็นคำควบกล้ำไม่แท้',choices:['จริง','ปลา','ครู','กวาง'],answer:0,explanation:'"จริง" อ่านว่า "จิง" ตัว ร ไม่ออกเสียง จึงเป็นควบกล้ำไม่แท้\nปลา ครู กวาง ออกเสียงทั้งสองตัว จึงเป็นควบกล้ำแท้'},
+ {id:'IT001',set:0,subject:'it',question:'ปุ่มลัด Ctrl + Z ใช้สำหรับคำสั่งใด',choices:['ยกเลิกคำสั่งล่าสุด (Undo)','ทำซ้ำคำสั่ง (Redo)','ตัด (Cut)','บันทึก (Save)'],answer:0,explanation:'Ctrl+Z = Undo\nปุ่มลัดที่ควรท่องคู่กัน: Ctrl+Y = Redo, Ctrl+X = Cut, Ctrl+S = Save, Ctrl+C = Copy, Ctrl+V = Paste'},
+ {id:'IT002',set:0,subject:'it',question:'1 กิโลไบต์ (KB) เท่ากับกี่ไบต์ (คิดตามระบบเลขฐานสอง)',choices:['1,024','1,000','512','2,048'],answer:0,explanation:'1 KB = 2¹⁰ = 1,024 Bytes\nลำดับหน่วย: Byte → KB → MB → GB → TB (แต่ละขั้นคูณ 1,024)'},
+ {id:'IT003',set:0,subject:'it',question:'ฟังก์ชันใดใน Microsoft Excel ใช้หาค่าเฉลี่ย',choices:['=AVERAGE()','=SUM()','=COUNT()','=MEAN()'],answer:0,explanation:'AVERAGE ใช้หาค่าเฉลี่ย\nตัวหลอกยอดนิยมคือ "MEAN" ซึ่งไม่มีใน Excel ส่วน SUM ใช้หาผลรวม และ COUNT ใช้นับเซลล์ที่เป็นตัวเลข'},
+ {id:'IT004',set:0,subject:'it',question:'หน่วยความจำใดที่ข้อมูลจะหายไปเมื่อปิดเครื่อง',choices:['RAM','ROM','SSD','Hard Disk'],answer:0,explanation:'RAM เป็นหน่วยความจำชั่วคราว (Volatile) เมื่อไฟดับข้อมูลจะหาย\nROM, SSD และ HDD เป็นแบบ Non-volatile'},
+ {id:'IT005',set:0,subject:'it',question:'การสร้างเว็บไซต์หรืออีเมลปลอมเพื่อหลอกให้กรอกรหัสผ่าน เรียกว่าอะไร',choices:['Phishing','Spam','Firewall','Backup'],answer:0,explanation:'Phishing มาจาก fishing (ตกปลา) คือการหลอกให้เหยื่อติดเบ็ด\nSpam = อีเมลขยะ, Firewall = ระบบป้องกันการเข้าถึง, Backup = การสำรองข้อมูล'},
+ {id:'IT006',set:0,subject:'it',question:'ไฟล์เอกสาร Microsoft Word รุ่นใหม่มีนามสกุลใด',choices:['.docx','.xlsx','.pptx','.pdf'],answer:0,explanation:'.docx = Word, .xlsx = Excel, .pptx = PowerPoint, .pdf = Portable Document Format'},
+ {id:'IT007',set:0,subject:'it',question:'อุปกรณ์ใดทำหน้าที่เป็นหน่วยประมวลผลกลางของคอมพิวเตอร์',choices:['CPU','Monitor','Printer','Scanner'],answer:0,explanation:'CPU (Central Processing Unit) คือสมองของคอมพิวเตอร์\nMonitor, Printer เป็น Output ส่วน Scanner เป็น Input'},
+ {id:'SB001',set:0,subject:'saraban',question:'ตามระเบียบสำนักนายกรัฐมนตรีว่าด้วยงานสารบรรณ หนังสือราชการมีกี่ชนิด',choices:['6 ชนิด','5 ชนิด','4 ชนิด','3 ชนิด'],answer:0,explanation:'มี 6 ชนิด: หนังสือภายนอก, หนังสือภายใน, หนังสือประทับตรา, หนังสือสั่งการ, หนังสือประชาสัมพันธ์ และหนังสือที่เจ้าหน้าที่ทำขึ้นหรือรับไว้เป็นหลักฐานในราชการ'},
+ {id:'SB002',set:0,subject:'saraban',question:'ข้อใด "ไม่ใช่" หนังสือสั่งการ',choices:['ประกาศ','คำสั่ง','ระเบียบ','ข้อบังคับ'],answer:0,explanation:'หนังสือสั่งการมี 3 ชนิด คือ คำสั่ง ระเบียบ ข้อบังคับ\n"ประกาศ" เป็นหนังสือประชาสัมพันธ์'},
+ {id:'SB003',set:0,subject:'saraban',question:'ข้อใดเรียงชั้นความเร็วของหนังสือราชการจากเร็วที่สุดไปช้าที่สุดได้ถูกต้อง',choices:['ด่วนที่สุด → ด่วนมาก → ด่วน','ด่วนมาก → ด่วนที่สุด → ด่วน','ด่วน → ด่วนมาก → ด่วนที่สุด','ด่วนที่สุด → ด่วน → ด่วนมาก'],answer:0,explanation:'• ด่วนที่สุด: ปฏิบัติทันทีที่ได้รับ\n• ด่วนมาก: ปฏิบัติโดยเร็ว\n• ด่วน: ปฏิบัติเร็วกว่าปกติเท่าที่จะทำได้'},
+ {id:'SB004',set:0,subject:'saraban',question:'โดยปกติหนังสือราชการต้องเก็บไว้ไม่น้อยกว่ากี่ปี',choices:['10 ปี','5 ปี','1 ปี','20 ปี'],answer:0,explanation:'หลักทั่วไปคือเก็บไว้ไม่น้อยกว่า 10 ปี โดยมีข้อยกเว้น เช่น หนังสือที่ต้องเก็บไว้ตลอดไป หรือที่มีกฎหมายกำหนดไว้เป็นอย่างอื่น'},
+ {id:'SB005',set:0,subject:'saraban',question:'หนังสือประชาสัมพันธ์มีกี่ชนิด ได้แก่อะไรบ้าง',choices:['ประกาศ แถลงการณ์ ข่าว','คำสั่ง ระเบียบ ข้อบังคับ','บันทึก รายงาน ข่าว','ประกาศ คำสั่ง ข่าว'],answer:0,explanation:'หนังสือประชาสัมพันธ์มี 3 ชนิด คือ ประกาศ แถลงการณ์ และข่าว\nเทคนิคจำ: "ประ-แถลง-ข่าว"'},
+ {id:'SB006',set:0,subject:'saraban',question:'หนังสือภายในใช้กระดาษชนิดใด',choices:['กระดาษบันทึกข้อความ','กระดาษตราครุฑ','กระดาษแบบฟอร์มคำสั่ง','กระดาษประกาศ'],answer:0,explanation:'หนังสือภายในใช้กระดาษบันทึกข้อความ ส่วนหนังสือภายนอกใช้กระดาษตราครุฑ เป็นคู่ที่ออกสอบบ่อยมาก'},
+ {id:'LW001',set:0,subject:'law',question:'รัฐธรรมนูญแห่งราชอาณาจักรไทยฉบับปัจจุบันประกาศใช้เมื่อ พ.ศ. ใด',choices:['2560','2550','2540','2557'],answer:0,explanation:'ฉบับปัจจุบันคือ รัฐธรรมนูญแห่งราชอาณาจักรไทย พุทธศักราช 2560\nตัวหลอก: 2557 คือฉบับชั่วคราว'},
+ {id:'LW002',set:0,subject:'law',question:'พระราชบัญญัติตำรวจแห่งชาติฉบับปัจจุบันคือฉบับ พ.ศ. ใด',choices:['พ.ศ. 2565','พ.ศ. 2547','พ.ศ. 2560','พ.ศ. 2551'],answer:0,explanation:'พ.ร.บ.ตำรวจแห่งชาติ พ.ศ. 2565 ใช้แทนฉบับ พ.ศ. 2547 ข้อสอบชอบเอาปี 2547 มาหลอก'},
+ {id:'LW003',set:0,subject:'law',question:'สำนักงานตำรวจแห่งชาติอยู่ในบังคับบัญชาของผู้ใด',choices:['นายกรัฐมนตรี','รัฐมนตรีว่าการกระทรวงมหาดไทย','รัฐมนตรีว่าการกระทรวงยุติธรรม','รัฐมนตรีว่าการกระทรวงกลาโหม'],answer:0,explanation:'สตช. เป็นส่วนราชการที่มีฐานะเป็นนิติบุคคล อยู่ในบังคับบัญชาของนายกรัฐมนตรี'},
+ {id:'LW004',set:0,subject:'law',question:'ตามประมวลกฎหมายแพ่งและพาณิชย์ บุคคลบรรลุนิติภาวะเมื่อใด',choices:['อายุ 20 ปีบริบูรณ์ หรือสมรสตามกฎหมาย','อายุ 18 ปีบริบูรณ์','อายุ 15 ปีบริบูรณ์','อายุ 21 ปีบริบูรณ์'],answer:0,explanation:'บรรลุนิติภาวะเมื่ออายุ 20 ปีบริบูรณ์ หรือเมื่อทำการสมรสตามกฎหมาย (ป.พ.พ. มาตรา 19–20)'},
+ {id:'LW005',set:0,subject:'law',question:'ตามประมวลกฎหมายอาญา (แก้ไขปี 2565) เด็กอายุไม่เกินกี่ปีกระทำความผิดแล้วไม่ต้องรับโทษ',choices:['12 ปี','10 ปี','15 ปี','7 ปี'],answer:0,explanation:'การแก้ไขปี 2565 ปรับเกณฑ์จาก "ไม่เกิน 10 ปี" เป็น "ไม่เกิน 12 ปี" ข้อสอบมักเอาตัวเลขเดิม 10 ปีมาหลอก'},
+ {id:'LW006',set:0,subject:'law',question:'พระราชบัญญัติข้อมูลข่าวสารของราชการตราขึ้นเมื่อ พ.ศ. ใด',choices:['พ.ศ. 2540','พ.ศ. 2539','พ.ศ. 2550','พ.ศ. 2562'],answer:0,explanation:'พ.ร.บ.ข้อมูลข่าวสารของราชการ พ.ศ. 2540\nตัวหลอก: 2539 = พ.ร.บ.วิธีปฏิบัติราชการทางปกครอง, 2562 = PDPA'},
+ {id:'EN001',set:0,subject:'english',question:'She ___ to work every day.',choices:['goes','go','going','gone'],answer:0,explanation:'Present Simple กับประธานเอกพจน์บุรุษที่ 3 (She) กริยาต้องเติม s/es → go → goes'},
+ {id:'EN002',set:0,subject:'english',question:'Which word has the same meaning as "rapid"?',choices:['fast','slow','weak','late'],answer:0,explanation:'rapid = รวดเร็ว จึงมีความหมายเหมือน fast'},
+ {id:'EN003',set:0,subject:'english',question:'What is the opposite of "arrive"?',choices:['depart','reach','come','enter'],answer:0,explanation:'arrive = มาถึง ตรงข้ามกับ depart = ออกเดินทาง ส่วน reach มีความหมายคล้าย arrive'},
+ {id:'EN004',set:0,subject:'english',question:'What is the past tense of "catch"?',choices:['caught','catched','catching','catches'],answer:0,explanation:'catch เป็นกริยาอปกติ: catch – caught – caught ส่วน "catched" ไม่มีจริง'},
+ {id:'EN005',set:0,subject:'english',question:'I have lived here ___ 2020.',choices:['since','for','at','during'],answer:0,explanation:'Present Perfect + จุดเริ่มต้นของเวลา (2020) ใช้ since\nถ้าเป็นช่วงระยะเวลา เช่น 5 years ใช้ for'},
+ {id:'EN006',set:0,subject:'english',question:'Please ___ the form before you submit it.',choices:['fill in','fill on','fill at','fill to'],answer:0,explanation:'fill in (a form) = กรอกแบบฟอร์ม เป็น Phrasal verb ที่ใช้บ่อยในงานสำนักงาน'}
+];
+
+/* =====================================================================
+   3) MATH GENERATOR
+   ===================================================================== */
+function mulberry32(a){return function(){a|=0;a=a+0x6D2B79F5|0;let t=Math.imul(a^a>>>15,1|a);t=t+Math.imul(t^t>>>7,61|t)^t;return((t^t>>>14)>>>0)/4294967296}}
+function genMath(set, idx){
+  const r = mulberry32(set*1000 + idx*7 + 13), ri=(a,b)=>a+Math.floor(r()*(b-a+1));
+  const type = idx % 6; let q, ans, exp;
+  if(type===0){ const p=ri(1,9)*5, b=ri(2,40)*20; ans=p*b/100; q=`${p}% ของ ${b.toLocaleString()} มีค่าเท่าใด`; exp=`${p}% ของ ${b} = ${b} × ${p} ÷ 100 = ${ans}\nทริค: หา 10% ก่อน (เลื่อนจุดทศนิยม) แล้วค่อยคูณหรือหาร`; }
+  else if(type===1){ const P=ri(5,50)*100, d=ri(1,6)*5; ans=P*(100-d)/100; q=`สินค้าราคา ${P.toLocaleString()} บาท ลดราคา ${d}% ต้องจ่ายเงินกี่บาท`; exp=`ลด ${d}% เท่ากับจ่าย ${100-d}%\n= ${P} × ${100-d} ÷ 100 = ${ans.toLocaleString()} บาท`; }
+  else if(type===2){ const n=[...Array(5)].map(()=>ri(10,99)); let s=n.reduce((a,b)=>a+b,0); const adj=s%5; n[4]-=adj; s-=adj; ans=s/5; q=`ค่าเฉลี่ยของ ${n.join(', ')} เท่ากับเท่าใด`; exp=`ผลรวม = ${n.join(' + ')} = ${s}\nค่าเฉลี่ย = ${s} ÷ 5 = ${ans}`; }
+  else if(type===3){ const a=ri(2,20), d=ri(2,9); const seq=[0,1,2,3,4].map(i=>a+i*d); ans=a+5*d; q=`จงหาจำนวนถัดไปของอนุกรม: ${seq.join(', ')}, ...`; exp=`เป็นอนุกรมเลขคณิตที่เพิ่มขึ้นทีละ ${d}\n${seq[4]} + ${d} = ${ans}`; }
+  else if(type===4){ const v=ri(4,12)*10, h=ri(2,6); ans=v*h; q=`รถยนต์วิ่งด้วยความเร็วเฉลี่ย ${v} กม./ชม. เป็นเวลา ${h} ชั่วโมง จะได้ระยะทางกี่กิโลเมตร`; exp=`ระยะทาง = ความเร็ว × เวลา = ${v} × ${h} = ${ans} กม.`; }
+  else { const m=ri(1,5); let n; do{n=ri(1,6)}while(n===m); const k=ri(2,20)*10, T=(m+n)*k; ans=m*k; q=`แบ่งเงิน ${T.toLocaleString()} บาท ให้ ก และ ข ในอัตราส่วน ${m} : ${n} ก จะได้เงินกี่บาท`; exp=`รวม ${m+n} ส่วน → 1 ส่วน = ${T} ÷ ${m+n} = ${k}\nก ได้ ${m} ส่วน = ${(m*k).toLocaleString()} บาท`; }
+  const s4=new Set([ans]); while(s4.size<4){ const v=ans+Math.max(1,Math.round(Math.abs(ans)*(0.05+r()*0.3)))*(r()<.5?-1:1); if(v>0) s4.add(v); }
+  const nums=[...s4].sort((a,b)=>a-b);
+  return { id:`S${set}-GEN-AUTO${String(idx+1).padStart(2,'0')}`, set, subject:'math', difficulty:2, fixed:false,
+           question:q, choices:nums.map(x=>x.toLocaleString()), answer:nums.indexOf(ans), explanation:exp };
+}
+
+/* =====================================================================
+   4) STORAGE, SETTINGS & BANK
+   ===================================================================== */
+const LS = { get(k,d){ try{ const v=JSON.parse(localStorage.getItem(k)); return v ?? d }catch{ return d } }, set(k,v){ localStorage.setItem(k, JSON.stringify(v)) } };
+const getSettings = ()=> ({...DEFAULT_SETTINGS, ...LS.get(K.settings,{})});
+const examDateObj = ()=>{ const s=getSettings(); return new Date(`${s.examDate}T${s.examTime||'09:00'}:00+07:00`); };
+let _bank=null;
+function getBank(){
+  if(_bank) return _bank;
+  let b=LS.get(K.bank,null);
+  if(!Array.isArray(b)){                                  // ครั้งแรก: สร้างคลังจาก SEED + โจทย์คำนวณอัตโนมัติ + ข้อมูลจาก v1
+    const map=new Map(), add=q=>map.set(q.id,{difficulty:2,fixed:false,...q});
+    SEED.forEach(add);
+    for(let s=1;s<=10;s++) for(let i=0;i<20;i++) add(genMath(s,i));
+    LS.get('nco_custom',[]).forEach(add); localStorage.removeItem('nco_custom');
+    b=[...map.values()]; LS.set(K.bank,b);
+  }
+  return _bank=b;
+}
+function saveBank(arr){ LS.set(K.bank,arr); _bank=arr; }
+function recordAnswers(list){
+  const st=LS.get(K.stats,{}), now=Date.now();
+  list.forEach(([id,ok])=>{ const s=st[id]||{seen:0,correct:0,wrong:0,box:0,last:0};
+    s.seen++; if(ok){ s.correct++; s.box=Math.min(5,s.box+1) } else { s.wrong++; s.box=0 } s.last=now; st[id]=s; });
+  LS.set(K.stats,st);
+}
+
+/* =====================================================================
+   5) CORE ALGORITHM — สุ่มข้อสอบ + Spaced Repetition + สลับช้อยส์
+   ===================================================================== */
+function shuffle(arr){ const a=[...arr]; for(let i=a.length-1;i>0;i--){ const j=Math.floor(Math.random()*(i+1)); [a[i],a[j]]=[a[j],a[i]]; } return a; }
+function shuffleChoices(q){
+  if(q.fixed) return {...q};
+  const order=shuffle([0,1,2,3]);
+  return { ...q, choices:order.map(i=>q.choices[i]), answer:order.indexOf(q.answer) };
+}
+const isDue=(s,now)=> s && (now-s.last) >= INTERVAL_DAYS[s.box]*864e5;
+function pickForSubject(sk, quota, setNo, bank, stats, ratio){
+  const pool=bank.filter(q=>q.subject===sk); if(!pool.length) return [];
+  const now=Date.now(), picked=new Map();
+  pool.filter(q=>isDue(stats[q.id],now))
+    .sort((a,b)=>(stats[a.id].box-stats[b.id].box)||(stats[b.id].wrong-stats[a.id].wrong)||(stats[a.id].last-stats[b.id].last))
+    .slice(0, Math.round(quota*ratio)).forEach(q=>picked.set(q.id,q));
+  const unseen=pool.filter(q=>!stats[q.id]), inSet=q=>setNo && Number(q.set)===Number(setNo);
+  for(const q of [...shuffle(unseen.filter(inSet)), ...shuffle(unseen.filter(q=>!inSet(q)))]){ if(picked.size>=quota) break; picked.set(q.id,q); }
+  for(const q of pool.filter(q=>!picked.has(q.id)).sort((a,b)=>(stats[a.id]?.last||0)-(stats[b.id]?.last||0))){ if(picked.size>=quota) break; picked.set(q.id,q); }
+  const arr=[...picked.values()], base=shuffle(pool); let i=0;
+  while(arr.length<quota){ arr.push(base[i%base.length]); i++; }
+  return shuffle(arr);
+}
+function buildMockExam(setNo){
+  const bank=getBank(), stats=LS.get(K.stats,{}), r=getSettings().reviewMock; let qs=[];
+  for(const [k,s] of Object.entries(SUBJECTS)) qs.push(...pickForSubject(k,s.quota,setNo,bank,stats,r));
+  return qs.map(shuffleChoices);
+}
+function buildPractice(subject,count){
+  const bank=getBank(), stats=LS.get(K.stats,{}), r=getSettings().reviewPractice; let qs=[];
+  if(subject==='all'){ for(const [k,s] of Object.entries(SUBJECTS)) qs.push(...pickForSubject(k,Math.max(1,Math.round(count*s.quota/150)),null,bank,stats,r)); qs=shuffle(qs); }
+  else qs=pickForSubject(subject,count,null,bank,stats,r);
+  return qs.map(shuffleChoices);
+}
+
+/* =====================================================================
+   6) APP STATE, HELPERS & ROUTER
+   ===================================================================== */
+let route='dashboard', param=null, S=LS.get(K.session,null), charts=[], uploadMsg='';
+const $=s=>document.querySelector(s);
+const esc=s=>String(s??'').replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
+const fmtTime=s=>{ s=Math.max(0,s); return [Math.floor(s/3600),Math.floor(s%3600/60),s%60].map(v=>String(v).padStart(2,'0')).join(':') };
+const fmtMin=m=>`${Math.floor(m/60)?Math.floor(m/60)+' ชั่วโมง':''}${m%60?' '+m%60+' นาที':''}`.trim();
+const pct=(c,t)=> t?Math.round(c/t*100):0;
+const today=()=>new Date().toISOString().slice(0,10);
+const bar=(p,color='bg-gold')=>`<div class="w-full h-3 bg-khaki-light rounded-full overflow-hidden"><div class="${color} h-full rounded-full transition-all" style="width:${Math.min(100,p)}%"></div></div>`;
+const saveS=()=> S?LS.set(K.session,S):localStorage.removeItem(K.session);
+function toast(msg,err=false){ const d=document.createElement('div'); d.className=`fixed bottom-5 left-1/2 -translate-x-1/2 z-[60] px-5 py-3 rounded-xl shadow-lg text-white border-b-4 border-gold ${err?'bg-maroon':'bg-navy'}`; d.textContent=msg; document.body.appendChild(d); setTimeout(()=>d.remove(),2600); }
+function download(data,name,type){ const a=document.createElement('a'); a.href=URL.createObjectURL(new Blob([data],{type})); a.download=name; a.click(); setTimeout(()=>URL.revokeObjectURL(a.href),1000); }
+
+function go(r,p=null){ if(editing) closeEditor(); route=r; param=p; window.scrollTo(0,0); render(); }
+function render(){
+  charts.forEach(c=>c.destroy()); charts=[];
+  document.querySelectorAll('#nav button').forEach(b=>{ const on=b.dataset.r===route; b.classList.toggle('bg-gold',on); b.classList.toggle('text-navy',on); b.classList.toggle('font-bold',on); });
+  const views={dashboard:viewDashboard, exam:viewExam, result:viewResult, bookmarks:viewBookmarks, admin:viewAdmin};
+  $('#app').innerHTML=(views[route]||viewDashboard)();
+  if(route==='result') drawRadar(param||LS.get(K.last,null));
+  if(route==='admin'){ if(!isAdmin()) setTimeout(()=>$('#pin')?.focus(),0); else if(adminTab==='bank') renderBankTable(); }
+}
+
+/* =====================================================================
+   7) VIEW: DASHBOARD
+   ===================================================================== */
+function viewDashboard(){
+  const st=getSettings(), hist=LS.get(K.hist,[]), mocks=hist.filter(h=>h.mode==='mock');
+  const bank=getBank(), stats=LS.get(K.stats,{});
+  const setsDone=new Set(mocks.map(h=>h.setNo)).size, seen=bank.filter(q=>stats[q.id]).length;
+  const avg=mocks.length?Math.round(mocks.reduce((a,h)=>a+h.total,0)/mocks.length):0;
+  const best=mocks.length?Math.max(...mocks.map(h=>h.total)):0;
+  const weak=bank.filter(q=>stats[q.id]&&stats[q.id].wrong>0&&stats[q.id].box<3).length, bms=LS.get(K.bm,[]).length;
+  const bestBySet={}; mocks.forEach(h=>bestBySet[h.setNo]=Math.max(bestBySet[h.setNo]??0,h.total));
+  const dateTxt=examDateObj().toLocaleDateString('th-TH',{day:'numeric',month:'long',year:'numeric'});
+  return `
+  ${S?`<div class="mb-4 rounded-xl bg-maroon text-white p-4 flex flex-wrap items-center justify-between gap-2 shadow">
+     <div><b>มีข้อสอบที่ทำค้างไว้:</b> ${esc(S.label)} — ทำแล้ว ${Object.keys(S.answers).length}/${S.qs.length} ข้อ</div>
+     <div class="flex gap-2"><button onclick="go('exam')" class="bg-gold text-navy font-bold px-4 py-2 rounded-lg">ทำต่อ ▶</button>
+     <button onclick="abandon()" class="border border-white/60 px-3 py-2 rounded-lg text-sm">ยกเลิก</button></div></div>`:''}
+  <section class="stripe text-white rounded-2xl p-6 md:p-8 shadow-xl border-2 border-gold">
+    ${st.name?`<div class="font-head text-lg mb-1">สวัสดี <span class="text-gold">${esc(st.name)}</span></div>`:''}
+    <div class="text-gold font-head tracking-wide text-sm">นับถอยหลังสู่สนามสอบจริง • ${dateTxt} เวลา ${esc(st.examTime)} น.</div>
+    <div class="grid grid-cols-4 gap-2 md:gap-4 mt-3 max-w-xl">
+      ${['d:วัน','h:ชั่วโมง','m:นาที','s:วินาที'].map(x=>{const [id,l]=x.split(':');return `<div class="bg-white/10 rounded-xl py-3 text-center border border-gold/40"><div id="cd-${id}" class="font-head text-3xl md:text-5xl font-bold text-gold">--</div><div class="text-xs md:text-sm text-khaki-light">${l}</div></div>`}).join('')}
+    </div>
+    <div class="mt-5 font-head text-xl md:text-2xl">"${QUOTES[new Date().getDate()%QUOTES.length]}"</div>
+    <div class="text-khaki-light text-sm mt-1">เป้าหมาย: <b class="text-gold">120+ คะแนน</b> (เกณฑ์ขั้นต่ำ 90 และต้องผ่านทั้ง 2 ภาค)</div>
+  </section>
+  <section class="grid grid-cols-2 md:grid-cols-4 gap-3 mt-5">
+    <div class="card p-4"><div class="text-sm text-khaki-dark">สอบจำลองครบชุด</div><div class="font-head text-3xl font-bold">${setsDone}<span class="text-base text-khaki-dark">/10</span></div>${bar(setsDone*10)}</div>
+    <div class="card p-4"><div class="text-sm text-khaki-dark">ข้อสอบที่เคยทำแล้ว</div><div class="font-head text-3xl font-bold">${seen}<span class="text-base text-khaki-dark">/${bank.length}</span></div>${bar(pct(seen,bank.length),'bg-navy')}</div>
+    <div class="card p-4"><div class="text-sm text-khaki-dark">คะแนนเฉลี่ย (Mock)</div><div class="font-head text-3xl font-bold ${avg>=120?'text-emerald-700':avg>=90?'text-navy':'text-maroon'}">${avg}<span class="text-base text-khaki-dark">/150</span></div>${bar(pct(avg,150),avg>=90?'bg-navy':'bg-maroon')}</div>
+    <div class="card p-4"><div class="text-sm text-khaki-dark">คะแนนสูงสุด</div><div class="font-head text-3xl font-bold text-gold">${best}<span class="text-base text-khaki-dark">/150</span></div>${bar(pct(best,120))}<div class="text-xs text-khaki-dark mt-1">${best>=120?'ถึงเป้า 120 แล้ว! 🏅':`อีก ${Math.max(0,120-best)} คะแนนถึงเป้า 120`}</div></div>
+  </section>
+  <section class="grid md:grid-cols-5 gap-5 mt-5">
+    <div class="card p-5 md:col-span-3">
+      <h2 class="font-head text-xl font-bold mb-1">🎖️ สอบจำลองเสมือนจริง (150 ข้อ / ${fmtMin(st.mockMinutes)})</h2>
+      <p class="text-sm text-khaki-dark mb-4">ไม่แสดงเฉลยระหว่างทำ เมื่อหมดเวลาระบบจะส่งข้อสอบอัตโนมัติ</p>
+      <div class="grid grid-cols-5 gap-2">
+        ${[...Array(10)].map((_,i)=>{const n=i+1,b=bestBySet[n];return `<button onclick="startMock(${n})" class="rounded-xl border-2 ${b!==undefined?(b>=120?'border-emerald-600':b>=90?'border-gold':'border-maroon'):'border-khaki'} bg-white hover:bg-navy hover:text-white transition p-2 text-center">
+          <div class="text-xs">ชุดที่</div><div class="font-head text-2xl font-bold">${n}</div><div class="text-[11px]">${b!==undefined?'สูงสุด '+b:'ยังไม่ทำ'}</div></button>`}).join('')}
+      </div>
+    </div>
+    <div class="card p-5 md:col-span-2">
+      <h2 class="font-head text-xl font-bold mb-1">📘 โหมดฝึกซ้อม</h2>
+      <p class="text-sm text-khaki-dark mb-3">ตอบแล้วเห็นเฉลยทันที พร้อมคำอธิบายแบบอาจารย์สอนเอง</p>
+      <select id="pSub" class="inp mb-2"><option value="all">ทุกวิชา (ตามสัดส่วนสนามจริง)</option>
+        ${Object.entries(SUBJECTS).map(([k,s])=>`<option value="${k}">${s.name} (${s.quota} ข้อ)</option>`).join('')}</select>
+      <select id="pCnt" class="inp mb-3">${[10,20,30,50].map(n=>`<option value="${n}" ${n===20?'selected':''}>${n} ข้อ</option>`).join('')}</select>
+      <button onclick="startPractice()" class="w-full bg-navy text-white font-bold py-2.5 rounded-lg hover:bg-navy-light">เริ่มฝึก ▶</button>
+      <div class="grid grid-cols-2 gap-2 mt-2">
+        <button onclick="startWrongReview()" class="bg-maroon text-white py-2 rounded-lg text-sm">ทบทวนข้อที่ผิด (${weak})</button>
+        <button onclick="startBookmarkPractice()" class="bg-gold text-navy py-2 rounded-lg text-sm font-bold">ฝึกข้อ Bookmark (${bms})</button>
+      </div>
+    </div>
+  </section>
+  <section class="grid md:grid-cols-2 gap-5 mt-5">
+    <div class="card p-5">
+      <h2 class="font-head text-lg font-bold mb-3">📋 โครงสร้างข้อสอบและเกณฑ์ผ่าน</h2>
+      <table class="w-full text-sm"><thead><tr class="bg-navy text-white"><th class="p-2 text-left">วิชา</th><th class="p-2">ข้อ</th><th class="p-2">ในคลัง</th></tr></thead><tbody>
+      ${['A','B'].map(p=>`<tr class="bg-khaki-light font-bold"><td class="p-2" colspan="3">${p==='A'?'ภาค ก':'ภาค ข'} ${PARTS[p].name} (${PARTS[p].total} ข้อ • ผ่าน ≥ ${Math.ceil(PARTS[p].total*PASS_RATIO)})</td></tr>`+
+        Object.entries(SUBJECTS).filter(([,s])=>s.part===p).map(([k,s])=>{const have=bank.filter(q=>q.subject===k).length;return `<tr class="border-b border-khaki-light"><td class="p-2">${s.name}</td><td class="p-2 text-center">${s.quota}</td><td class="p-2 text-center ${have<s.quota*10?'text-maroon':'text-emerald-700'}">${have}</td></tr>`}).join('')).join('')}
+      </tbody></table>
+      <div class="mt-3 text-sm bg-khaki-light rounded-lg p-3">✅ ผ่านขั้นต่ำ: ภาค ก ≥ 24 <b>และ</b> ภาค ข ≥ 66 (รวม ≥ 90)<br>🎯 เป้าหมายสอบติด: <b>120 คะแนนขึ้นไป</b></div>
+    </div>
+    <div class="card p-5">
+      <h2 class="font-head text-lg font-bold mb-3">🕘 ประวัติการสอบล่าสุด</h2>
+      ${hist.length?`<div class="space-y-2 max-h-80 overflow-auto">${hist.slice(0,12).map((h,i)=>`
+        <button onclick="openHist(${i})" class="w-full flex justify-between items-center border border-khaki-light rounded-lg p-2 hover:bg-khaki-light text-left">
+          <div><div class="font-bold text-sm">${esc(h.label)}</div><div class="text-xs text-khaki-dark">${new Date(h.date).toLocaleString('th-TH')}</div></div>
+          <div class="text-right"><div class="font-head font-bold">${h.total}/${h.totalQ}</div><span class="text-[11px] px-2 rounded-full ${h.pass?'bg-emerald-600':'bg-maroon'} text-white">${h.pass?'ผ่าน':'ไม่ผ่าน'}</span></div>
+        </button>`).join('')}</div>`:'<p class="text-sm text-khaki-dark">ยังไม่มีประวัติ ลองเริ่มจากชุดที่ 1 ได้เลย</p>'}
+    </div>
+  </section>`;
+}
+
+/* =====================================================================
+   8) SESSION CONTROL
+   ===================================================================== */
+function newSession(mode,qs,label,extra={}){
+  if(!qs.length){ alert('ไม่มีข้อสอบในหมวดนี้'); return; }
+  if(S && !confirm('มีข้อสอบที่ทำค้างไว้ ต้องการทิ้งและเริ่มใหม่หรือไม่?')) return;
+  const secs=getSettings().mockMinutes*60;
+  S={ mode, qs, label, answers:{}, idx:0, startedAt:Date.now(), endAt: mode==='mock'?Date.now()+secs*1000:null, ...extra };
+  saveS(); go('exam');
+}
+function startMock(n){ newSession('mock', buildMockExam(n), `สอบจำลองชุดที่ ${n}`, {setNo:n}); }
+function startPractice(){ const s=$('#pSub').value, c=+$('#pCnt').value; newSession('practice', buildPractice(s,c), `ฝึกซ้อม: ${s==='all'?'ทุกวิชา':SUBJECTS[s].short} ${c} ข้อ`); }
+function startWrongReview(){
+  const st=LS.get(K.stats,{}); const qs=getBank().filter(q=>st[q.id]&&st[q.id].wrong>0&&st[q.id].box<3).sort((a,b)=>st[a.id].box-st[b.id].box).slice(0,30);
+  if(!qs.length) return alert('ยังไม่มีข้อที่ต้องทบทวน');
+  newSession('practice', shuffle(qs).map(shuffleChoices), `ทบทวนข้อที่เคยผิด ${qs.length} ข้อ`);
+}
+function startBookmarkPractice(){
+  const ids=LS.get(K.bm,[]); const qs=getBank().filter(q=>ids.includes(q.id));
+  if(!qs.length) return alert('ยังไม่มีข้อที่บันทึกไว้');
+  newSession('practice', shuffle(qs).map(shuffleChoices), `ฝึกข้อที่บันทึกไว้ ${qs.length} ข้อ`);
+}
+function abandon(){ if(confirm('ยกเลิกข้อสอบที่ทำค้างไว้?')){ S=null; saveS(); render(); } }
+function openHist(i){ go('result', LS.get(K.hist,[])[i]); }
+
+/* =====================================================================
+   9) VIEW: EXAM ROOM
+   ===================================================================== */
+function viewExam(){
+  if(!S) return `<div class="card p-8 text-center"><p class="mb-4">ยังไม่มีข้อสอบที่กำลังทำอยู่</p><button onclick="go('dashboard')" class="bg-navy text-white px-5 py-2 rounded-lg">กลับแดชบอร์ด</button></div>`;
+  const q=S.qs[S.idx], ans=S.answers[S.idx], prac=S.mode!=='mock', shown=prac&&ans!==undefined;
+  const bms=LS.get(K.bm,[]), isBm=bms.includes(q.id), answered=Object.keys(S.answers).length, total=S.qs.length, sub=SUBJECTS[q.subject];
+  const choices=q.choices.map((c,i)=>{
+    let cls='bg-white border-khaki hover:border-navy hover:bg-khaki-light';
+    if(shown) cls=i===q.answer?'bg-emerald-600 border-emerald-700 text-white':i===ans?'bg-maroon border-maroon text-white':'bg-white border-khaki opacity-60';
+    else if(ans===i) cls='bg-navy border-navy text-white';
+    return `<button onclick="choose(${i})" class="choice-btn w-full text-left border-2 rounded-xl px-4 py-3 flex gap-3 items-start ${cls}"><span class="font-head font-bold w-8 h-8 shrink-0 rounded-full bg-gold text-navy flex items-center justify-center">${LABELS[i]}</span><span class="pt-1">${esc(c)}</span></button>`;
+  }).join('');
+  const explain=shown?`<div class="mt-4 rounded-xl border-l-4 ${ans===q.answer?'border-emerald-600 bg-emerald-50':'border-maroon bg-red-50'} p-4">
+      <div class="font-bold mb-1">${ans===q.answer?'✔ ถูกต้อง! เก่งมาก':`✘ ยังไม่ถูก คำตอบที่ถูกคือ ${LABELS[q.answer]}. ${esc(q.choices[q.answer])}`}</div>
+      <div class="text-sm leading-relaxed pre"><b>👨‍🏫 อาจารย์อธิบาย:</b>\n${esc(q.explanation||'—')}</div></div>`:'';
+  let lastSub=null;
+  const palette=S.qs.map((qq,i)=>{
+    let head=''; if(!prac&&qq.subject!==lastSub){ lastSub=qq.subject; head=`<div class="col-span-10 text-[11px] font-bold text-khaki-dark mt-1">${SUBJECTS[qq.subject].short}</div>`; }
+    const a=S.answers[i]; let c='bg-white text-navy';
+    if(a!==undefined) c=prac?(a===qq.answer?'bg-emerald-600 text-white':'bg-maroon text-white'):'bg-navy text-white';
+    return head+`<button onclick="jump(${i})" class="text-[11px] h-7 rounded ${c} ${i===S.idx?'ring-2 ring-gold ring-offset-1':''} ${bms.includes(qq.id)?'border-2 border-gold':'border border-khaki'}">${i+1}</button>`;
+  }).join('');
+  return `
+  <div class="bg-navy text-white rounded-2xl p-4 flex flex-wrap items-center justify-between gap-3 shadow-lg border-b-4 border-gold">
+    <div><div class="text-xs text-khaki-light">${prac?'โหมดฝึกซ้อม':'โหมดสอบจำลอง'}</div><div class="font-head font-bold text-lg">${esc(S.label)}</div></div>
+    <div class="flex-1 min-w-[180px] max-w-sm"><div class="text-xs mb-1 text-khaki-light">ทำแล้ว ${answered}/${total} ข้อ</div>${bar(pct(answered,total))}</div>
+    ${prac?'':`<div class="text-center"><div class="text-xs text-khaki-light">เวลาคงเหลือ</div><div id="timer" class="font-head text-3xl font-bold text-gold tabular-nums">${fmtTime(Math.round((S.endAt-Date.now())/1000))}</div></div>`}
+  </div>
+  <div class="grid lg:grid-cols-3 gap-5 mt-5">
+    <div class="lg:col-span-2 card p-5">
+      <div class="flex flex-wrap justify-between items-center gap-2 mb-3">
+        <div class="flex flex-wrap gap-2 text-xs"><span class="px-2 py-1 rounded-full bg-navy text-white">${sub.part==='A'?'ภาค ก':'ภาค ข'}</span><span class="px-2 py-1 rounded-full bg-khaki-light">${sub.name}</span><span class="px-2 py-1 rounded-full border border-khaki">ระดับ${DIFF[q.difficulty||2]}</span></div>
+        <button onclick="toggleBm('${esc(q.id)}')" class="text-sm px-3 py-1 rounded-lg border-2 ${isBm?'bg-gold border-gold text-navy font-bold':'border-khaki'}">${isBm?'★ บันทึกแล้ว':'☆ บันทึกข้อนี้'}</button>
+      </div>
+      <div class="font-head text-lg md:text-xl mb-4 leading-relaxed"><span class="text-maroon">ข้อ ${S.idx+1}.</span> ${esc(q.question)}</div>
+      <div class="space-y-2">${choices}</div>${explain}
+      <div class="flex justify-between mt-5 gap-2">
+        <button onclick="nav(-1)" ${S.idx===0?'disabled':''} class="px-4 py-2 rounded-lg border-2 border-navy disabled:opacity-30">◀ ก่อนหน้า</button>
+        <button onclick="submitExam()" class="px-4 py-2 rounded-lg bg-maroon text-white font-bold">${prac?'จบการฝึก':'ส่งข้อสอบ'}</button>
+        <button onclick="nav(1)" ${S.idx===total-1?'disabled':''} class="px-4 py-2 rounded-lg bg-navy text-white disabled:opacity-30">ถัดไป ▶</button>
+      </div>
+      <div class="text-[11px] text-khaki-dark mt-3">คีย์ลัด: 1–4 เลือก ก–ง • ← → เปลี่ยนข้อ • B บันทึกข้อ</div>
+    </div>
+    <div class="card p-4 h-fit lg:sticky lg:top-24">
+      <div class="font-bold mb-2 text-sm">กระดานข้อสอบ</div>
+      <div class="grid grid-cols-10 gap-1 max-h-[60vh] overflow-auto p-1">${palette}</div>
+      <div class="text-[11px] text-khaki-dark mt-3">${prac?'🟩 ถูก • 🟥 ผิด':'🟦 ตอบแล้ว'} • ⬜ ยังไม่ทำ • กรอบทอง = Bookmark</div>
+    </div>
+  </div>`;
+}
+function choose(i){
+  if(!S) return; const q=S.qs[S.idx];
+  if(S.mode!=='mock' && S.answers[S.idx]!==undefined) return;
+  S.answers[S.idx]=i; if(S.mode!=='mock') recordAnswers([[q.id,i===q.answer]]);
+  saveS(); render();
+}
+function nav(d){ S.idx=Math.min(S.qs.length-1,Math.max(0,S.idx+d)); saveS(); render(); }
+function jump(i){ S.idx=i; saveS(); render(); }
+function toggleBm(id){ let b=LS.get(K.bm,[]); b=b.includes(id)?b.filter(x=>x!==id):[...b,id]; LS.set(K.bm,b); render(); }
+
+/* =====================================================================
+   10) SUBMIT & SCORING — ≥60% ต่อภาค / รวม 90 / เป้า 120
+   ===================================================================== */
+function submitExam(auto=false){
+  if(!S) return;
+  const total=S.qs.length, answered=Object.keys(S.answers).length;
+  if(!auto && !confirm(`ยืนยันส่งข้อสอบ?\nทำแล้ว ${answered}/${total} ข้อ${answered<total?`\n(ยังไม่ได้ทำ ${total-answered} ข้อ ซึ่งจะได้ 0 คะแนน)`:''}`)) return;
+  const per={}; Object.keys(SUBJECTS).forEach(k=>per[k]={c:0,t:0});
+  const wrong=[], rec=[];
+  S.qs.forEach((q,i)=>{ const a=S.answers[i], ok=a===q.answer; per[q.subject].t++; if(ok) per[q.subject].c++;
+    else wrong.push({no:i+1,id:q.id,subject:q.subject,question:q.question,choices:q.choices,answer:q.answer,chosen:a??null,explanation:q.explanation});
+    if(S.mode==='mock') rec.push([q.id,ok]); });
+  if(rec.length) recordAnswers(rec);
+  const part=p=>Object.keys(SUBJECTS).filter(k=>SUBJECTS[k].part===p).reduce((s,k)=>({c:s.c+per[k].c,t:s.t+per[k].t}),{c:0,t:0});
+  const A=part('A'), B=part('B'), sum=A.c+B.c, needA=Math.ceil(A.t*PASS_RATIO), needB=Math.ceil(B.t*PASS_RATIO);
+  const passA=A.t===0||A.c>=needA, passB=B.t===0||B.c>=needB;
+  const r={ id:Date.now(), mode:S.mode, setNo:S.setNo||null, label:S.label, date:new Date().toISOString(), per, A, B, total:sum, totalQ:total,
+            needA, needB, passA, passB, pass:passA&&passB&&sum>=needA+needB, target:Math.ceil(total*TARGET_RATIO),
+            duration:Math.round((Date.now()-S.startedAt)/1000), auto, wrong };
+  const {wrong:_w,...summary}=r;
+  LS.set(K.hist,[summary,...LS.get(K.hist,[])].slice(0,50)); LS.set(K.last,r);
+  S=null; saveS(); go('result',r);
+}
+
+/* =====================================================================
+   11) VIEW: RESULT DASHBOARD
+   ===================================================================== */
+function viewResult(){
+  const r=param||LS.get(K.last,null); if(!r) return `<div class="card p-8 text-center">ยังไม่มีผลสอบ</div>`;
+  const gap=r.target-r.total;
+  const status=!r.pass
+    ? {cls:'bg-maroon', t:'ยังไม่ผ่านเกณฑ์', d:[!r.passA&&r.A.t?`ภาค ก ได้ ${r.A.c}/${r.A.t} (ต้องได้ ≥ ${r.needA}) ขาดอีก ${r.needA-r.A.c} คะแนน`:'', !r.passB&&r.B.t?`ภาค ข ได้ ${r.B.c}/${r.B.t} (ต้องได้ ≥ ${r.needB}) ขาดอีก ${r.needB-r.B.c} คะแนน`:''].filter(Boolean).join(' • ')}
+    : r.total>=r.target ? {cls:'bg-emerald-700', t:'ผ่านเกณฑ์และถึงเป้าหมาย 🏅', d:`ได้ ${r.total} คะแนน ถึงเป้า ${r.target} แล้ว โอกาสสอบติดสูง รักษามาตรฐานนี้ไว้!`}
+    : {cls:'bg-gold !text-navy', t:'ผ่านเกณฑ์ขั้นต่ำ แต่ยังไม่ถึงเป้า', d:`ยังขาดอีก ${gap} คะแนนจึงจะถึงเป้า ${r.target} (สนามจริงแข่งกันที่ 120+)`};
+  const keys=Object.keys(SUBJECTS).filter(k=>r.per[k]&&r.per[k].t>0);
+  const ranked=[...keys].sort((a,b)=>pct(r.per[a].c,r.per[a].t)-pct(r.per[b].c,r.per[b].t));
+  const level=p=>p<60?['วิกฤต ต้องเร่งด่วน','bg-maroon text-white']:p<80?['ควรเสริม','bg-gold text-navy']:['แข็งแรง','bg-emerald-600 text-white'];
+  return `
+  ${r.auto?`<div class="mb-3 rounded-lg bg-maroon text-white p-3 text-sm">⏰ หมดเวลาสอบ ระบบส่งข้อสอบให้อัตโนมัติแล้ว</div>`:''}
+  <div class="${status.cls} text-white rounded-2xl p-6 shadow-lg border-b-4 border-navy">
+    <div class="text-sm opacity-80">${esc(r.label)} • ${new Date(r.date).toLocaleString('th-TH')} • ใช้เวลา ${fmtTime(r.duration)}</div>
+    <div class="font-head text-3xl font-bold mt-1">${status.t}</div><div class="mt-1">${status.d}</div>
+  </div>
+  <div class="grid grid-cols-2 md:grid-cols-4 gap-3 mt-5">
+    <div class="card p-4"><div class="text-sm text-khaki-dark">คะแนนรวม</div><div class="font-head text-4xl font-bold">${r.total}<span class="text-lg text-khaki-dark">/${r.totalQ}</span></div><div class="text-xs">ผ่าน ≥ ${r.needA+r.needB} • เป้า ≥ ${r.target}</div></div>
+    <div class="card p-4"><div class="text-sm text-khaki-dark">ภาค ก ความรู้ทั่วไป</div><div class="font-head text-3xl font-bold ${r.passA?'text-emerald-700':'text-maroon'}">${r.A.c}<span class="text-base text-khaki-dark">/${r.A.t}</span></div>${r.A.t?bar(pct(r.A.c,r.A.t),r.passA?'bg-emerald-600':'bg-maroon'):''}<div class="text-xs mt-1">เกณฑ์ ≥ ${r.needA}</div></div>
+    <div class="card p-4"><div class="text-sm text-khaki-dark">ภาค ข เฉพาะตำแหน่ง</div><div class="font-head text-3xl font-bold ${r.passB?'text-emerald-700':'text-maroon'}">${r.B.c}<span class="text-base text-khaki-dark">/${r.B.t}</span></div>${r.B.t?bar(pct(r.B.c,r.B.t),r.passB?'bg-emerald-600':'bg-maroon'):''}<div class="text-xs mt-1">เกณฑ์ ≥ ${r.needB}</div></div>
+    <div class="card p-4"><div class="text-sm text-khaki-dark">ความแม่นยำ</div><div class="font-head text-4xl font-bold text-gold">${pct(r.total,r.totalQ)}%</div><div class="text-xs">เป้าหมาย 80%</div></div>
+  </div>
+  <div class="grid md:grid-cols-2 gap-5 mt-5">
+    <div class="card p-5"><h3 class="font-head font-bold text-lg mb-2">🕸️ กราฟใยแมงมุมรายวิชา</h3>
+      ${keys.length>=3?'<canvas id="radar" height="300"></canvas>':'<p class="text-sm text-khaki-dark">กราฟใยแมงมุมต้องมีอย่างน้อย 3 วิชา</p>'}</div>
+    <div class="card p-5"><h3 class="font-head font-bold text-lg mb-3">🎯 แผนเก็บคะแนน (เรียงจากวิชาที่อ่อนที่สุด)</h3>
+      <div class="space-y-3">${ranked.map(k=>{const p=pct(r.per[k].c,r.per[k].t),[lv,c]=level(p);return `
+        <div><div class="flex justify-between text-sm mb-1"><b>${SUBJECTS[k].name}</b><span>${r.per[k].c}/${r.per[k].t} (${p}%) <span class="text-[11px] px-2 py-0.5 rounded-full ${c}">${lv}</span></span></div>
+        ${bar(p,p<60?'bg-maroon':p<80?'bg-gold':'bg-emerald-600')}${p<80?`<div class="text-xs text-khaki-dark mt-1">💡 ${TIPS[k]}</div>`:''}</div>`}).join('')}</div>
+    </div>
+  </div>
+  ${r.wrong&&r.wrong.length?`<div class="card p-5 mt-5"><h3 class="font-head font-bold text-lg mb-3">📝 ทบทวนข้อที่ผิด/ไม่ได้ทำ (${r.wrong.length} ข้อ)</h3>
+    <div class="space-y-2">${r.wrong.map(w=>`<details class="border border-khaki-light rounded-lg p-3"><summary class="cursor-pointer"><b>ข้อ ${w.no}</b> [${SUBJECTS[w.subject].short}] ${esc(w.question)}</summary>
+      <div class="mt-2 text-sm space-y-1">${w.choices.map((c,i)=>`<div class="${i===w.answer?'text-emerald-700 font-bold':i===w.chosen?'text-maroon line-through':''}">${LABELS[i]}. ${esc(c)}</div>`).join('')}
+      <div class="text-xs">${w.chosen===null?'ไม่ได้ตอบ':'คุณตอบ '+LABELS[w.chosen]}</div>
+      <div class="bg-khaki-light rounded p-2 pre"><b>👨‍🏫 อาจารย์อธิบาย:</b>\n${esc(w.explanation||'—')}</div>
+      <button onclick="toggleBmQuiet('${esc(w.id)}',this)" class="text-xs underline text-navy">☆ บันทึกข้อนี้ไว้ทบทวน</button></div></details>`).join('')}</div></div>`:''}
+  <div class="flex gap-2 mt-5"><button onclick="go('dashboard')" class="bg-navy text-white px-5 py-2 rounded-lg">กลับแดชบอร์ด</button>
+  <button onclick="startWrongReview()" class="bg-maroon text-white px-5 py-2 rounded-lg">ฝึกข้อที่ผิดทันที</button></div>`;
+}
+function toggleBmQuiet(id,btn){ const b=LS.get(K.bm,[]); if(!b.includes(id)){ b.push(id); LS.set(K.bm,b); } btn.textContent='★ บันทึกแล้ว'; }
+function drawRadar(r){
+  const el=document.getElementById('radar'); if(!el||!window.Chart||!r) return;
+  const keys=Object.keys(SUBJECTS).filter(k=>r.per[k]&&r.per[k].t>0);
+  charts.push(new Chart(el,{type:'radar',data:{labels:keys.map(k=>SUBJECTS[k].short),datasets:[
+    {label:'คะแนนของคุณ (%)',data:keys.map(k=>pct(r.per[k].c,r.per[k].t)),backgroundColor:'rgba(11,31,58,.25)',borderColor:'#0B1F3A',pointBackgroundColor:'#C9A227',pointRadius:5,borderWidth:2},
+    {label:'เกณฑ์ผ่าน 60%',data:keys.map(()=>60),borderColor:'#7A1F2B',borderDash:[6,4],backgroundColor:'transparent',pointRadius:0,borderWidth:2},
+    {label:'เป้าสอบติด 80%',data:keys.map(()=>80),borderColor:'#C9A227',borderDash:[2,3],backgroundColor:'transparent',pointRadius:0,borderWidth:2}]},
+    options:{scales:{r:{min:0,max:100,ticks:{stepSize:20,backdropColor:'transparent'},pointLabels:{font:{family:'Sarabun',size:13,weight:'bold'}}}},plugins:{legend:{position:'bottom',labels:{font:{family:'Sarabun'}}}}}}));
+}
+
+/* =====================================================================
+   12) VIEW: BOOKMARKS
+   ===================================================================== */
+function viewBookmarks(){
+  const ids=LS.get(K.bm,[]), qs=getBank().filter(q=>ids.includes(q.id));
+  return `<div class="flex flex-wrap justify-between items-center gap-2 mb-4"><h2 class="font-head text-2xl font-bold">★ ข้อที่บันทึกไว้ (${qs.length})</h2>
+    ${qs.length?`<button onclick="startBookmarkPractice()" class="bg-gold text-navy font-bold px-4 py-2 rounded-lg">ฝึกทำทั้งหมด ▶</button>`:''}</div>
+  ${qs.length?qs.map(q=>`<div class="card p-4 mb-3"><div class="flex justify-between gap-2"><div class="text-xs px-2 py-1 rounded-full bg-khaki-light h-fit">${SUBJECTS[q.subject].short}</div>
+    <button onclick="toggleBm('${esc(q.id)}')" class="text-xs text-maroon underline">ลบออก</button></div>
+    <div class="font-bold my-2">${esc(q.question)}</div>
+    <div class="text-sm">${q.choices.map((c,i)=>`<div class="${i===q.answer?'text-emerald-700 font-bold':''}">${i===q.answer?'✔':'•'} ${esc(c)}</div>`).join('')}</div>
+    <div class="text-sm bg-khaki-light rounded p-2 mt-2 pre"><b>👨‍🏫 อาจารย์อธิบาย:</b>\n${esc(q.explanation||'—')}</div></div>`).join('')
+  :'<div class="card p-8 text-center text-khaki-dark">กดปุ่ม ☆ ในห้องสอบเพื่อบันทึกข้อที่ยากหรือสงสัยไว้ทบทวน</div>'}`;
+}
+
+/* =====================================================================
+   13) ADMIN — LOGIN
+   ===================================================================== */
+let adminTab='bank', loginFails=0, lockUntil=0;
+const isAdmin=()=>sessionStorage.getItem('nco_admin')==='1';
+function viewLogin(){
+  const def=getSettings().pin===DEFAULT_SETTINGS.pin;
+  return `<div class="max-w-sm mx-auto card p-6 mt-10 text-center">
+    <div class="w-14 h-14 mx-auto rounded-full bg-navy border-2 border-gold text-gold font-head font-bold flex items-center justify-center">ตร.</div>
+    <h2 class="font-head text-xl font-bold mt-3 mb-4">เข้าสู่ระบบหลังบ้าน</h2>
+    <div class="relative"><input id="pin" type="password" autocomplete="off" placeholder="รหัส PIN" class="inp text-center tracking-[.4em] pr-10" onkeydown="if(event.key==='Enter')doLogin()">
+      <button type="button" title="แสดง/ซ่อนรหัส" onclick="const i=$('#pin');i.type=i.type==='password'?'text':'password'" class="absolute right-3 top-2">👁</button></div>
+    <button onclick="doLogin()" class="w-full mt-3 bg-navy text-white font-bold py-2.5 rounded-lg hover:bg-navy-light">เข้าสู่ระบบ</button>
+    <div id="loginMsg" class="text-sm text-maroon mt-2"></div>
+    ${def?'<div class="text-xs text-khaki-dark mt-2">ยังใช้รหัสเริ่มต้นอยู่ ควรเปลี่ยนที่หน้าตั้งค่า</div>':''}
+  </div>`;
+}
+function doLogin(){
+  const m=$('#loginMsg');
+  if(Date.now()<lockUntil) return m.textContent=`ใส่รหัสผิดหลายครั้ง กรุณารอ ${Math.ceil((lockUntil-Date.now())/1000)} วินาที`;
+  if($('#pin').value===getSettings().pin){ sessionStorage.setItem('nco_admin','1'); loginFails=0; render(); }
+  else { loginFails++; if(loginFails>=5){ lockUntil=Date.now()+30000; loginFails=0; }
+         m.textContent='รหัส PIN ไม่ถูกต้อง'; $('#pin').value=''; $('#pin').focus(); }
+}
+function logout(){ sessionStorage.removeItem('nco_admin'); selected.clear(); go('dashboard'); toast('ออกจากระบบแล้ว'); }
+function viewAdmin(){
+  if(!isAdmin()) return viewLogin();
+  const tabs={bank:['คลังข้อสอบ',viewBank], upload:['อัปโหลด / นำเข้า',viewUpload], settings:['ตั้งค่าและสำรองข้อมูล',viewSettings]};
+  return `${getSettings().pin===DEFAULT_SETTINGS.pin?`<div class="mb-3 rounded-lg bg-gold/20 border border-gold p-3 text-sm">⚠️ ยังใช้ PIN เริ่มต้นอยู่ ควรเปลี่ยนที่แท็บ "ตั้งค่าและสำรองข้อมูล"</div>`:''}
+  <div class="flex flex-wrap items-center gap-2 mb-4">
+    ${Object.entries(tabs).map(([k,[l]])=>`<button onclick="adminTab='${k}';render()" class="${adminTab===k?'bg-navy text-white px-4 py-2 rounded-lg font-bold':'btn-o'}">${l}</button>`).join('')}
+    <button onclick="logout()" class="btn-o ml-auto">ออกจากระบบ</button></div>
+  ${tabs[adminTab][1]()}`;
+}
+
+/* =====================================================================
+   14) ADMIN — QUESTION BANK MANAGER + QUALITY CHECK
+   ===================================================================== */
+let filt={q:'',set:'all',subject:'all',issue:'all'}, selected=new Set(), showLimit=200, _issues={}, _filtered=[];
+const ISSUE={noexp:'ไม่มีคำอธิบาย', letter:'คำอธิบายอ้างตัวอักษรช้อยส์', dupq:'โจทย์ซ้ำกัน', dupc:'ตัวเลือกซ้ำกัน'};
+const normText=s=>String(s??'').replace(/\s+/g,'').toLowerCase();
+// ตรวจคำอธิบายที่อ้าง "ข้อ ก", "ตัวเลือก ข", "ตอบ ค." ซึ่งจะผิดเมื่อสลับช้อยส์
+const LETTER_REF=/(ข้อ|ตัวเลือก|ช้อยส์|ช้อยซ์|ตอบ)\s*[กขคง](?=\s|[.)\],:]|$|และ|หรือ|ถูก|ผิด)/;
+const cleanId=s=>String(s??'').trim().replace(/[^\w\u0E00-\u0E7F.-]/g,'-');
+
+function analyzeBank(bank){
+  const cnt={}; bank.forEach(q=>{ const k=normText(q.question); cnt[k]=(cnt[k]||0)+1; });
+  const out={};
+  bank.forEach(q=>{ const a=[];
+    if(!String(q.explanation||'').trim()) a.push('noexp');
+    if(!q.fixed && LETTER_REF.test(q.explanation||'')) a.push('letter');
+    if(cnt[normText(q.question)]>1) a.push('dupq');
+    if(new Set(q.choices.map(normText)).size<4) a.push('dupc');
+    out[q.id]=a; });
+  return out;
+}
+function nextId(set,sub,bank){
+  const p=`S${set}-${SUBJECTS[sub].code}-`; let n=0;
+  bank.forEach(q=>{ if(q.id.startsWith(p)){ const v=parseInt(q.id.slice(p.length)); if(v>n) n=v; } });
+  return p+String(n+1).padStart(3,'0');
+}
+function viewBank(){
+  const bank=getBank(); _issues=analyzeBank(bank);
+  const count=k=>bank.filter(q=>_issues[q.id].includes(k)).length;
+  return `<div class="card p-5">
+    <div class="flex flex-wrap justify-between items-center gap-2 mb-4">
+      <h2 class="font-head text-xl font-bold">จัดการคลังข้อสอบ (${bank.length} ข้อ)</h2>
+      <div class="flex flex-wrap gap-2">
+        <button onclick="openEditor()" class="bg-gold text-navy font-bold px-4 py-2 rounded-lg hover:bg-gold-light">+ เพิ่มข้อสอบ</button>
+        <button onclick="exportBank('csv')" class="btn-o">ส่งออก CSV (<span id="expCnt">0</span>)</button>
+        <button onclick="exportBank('json')" class="btn-o">ส่งออก JSON</button>
+      </div>
+    </div>
+    <div class="grid grid-cols-2 md:grid-cols-4 gap-3 mb-4">
+      ${Object.entries(ISSUE).map(([k,l])=>`<button onclick="setIssue('${k}')" class="text-left rounded-xl border p-3 transition ${filt.issue===k?'border-maroon bg-red-50 ring-1 ring-maroon':'border-khaki hover:bg-khaki-light/50'}">
+        <div class="font-head text-2xl font-bold ${count(k)?'text-maroon':'text-emerald-700'}">${count(k)}</div><div class="text-xs">${l}</div></button>`).join('')}
+    </div>
+    ${filt.issue!=='all'?`<div class="text-sm mb-2">กำลังกรอง: <b class="text-maroon">${ISSUE[filt.issue]}</b> <button onclick="setIssue('${filt.issue}')" class="underline ml-2">ล้างตัวกรอง</button></div>`:''}
+    <div class="grid md:grid-cols-4 gap-3">
+      <input class="inp md:col-span-2" placeholder="ค้นหา id, โจทย์ หรือตัวเลือก" value="${esc(filt.q)}" oninput="filt.q=this.value;showLimit=200;renderBankTable()">
+      <select class="inp" onchange="filt.set=this.value;showLimit=200;renderBankTable()"><option value="all">ทุกชุด</option><option value="0" ${filt.set==='0'?'selected':''}>คลังกลาง (0)</option>
+        ${[...Array(10)].map((_,i)=>`<option value="${i+1}" ${filt.set===String(i+1)?'selected':''}>ชุดที่ ${i+1}</option>`).join('')}</select>
+      <select class="inp" onchange="filt.subject=this.value;showLimit=200;renderBankTable()"><option value="all">ทุกวิชา</option>
+        ${Object.entries(SUBJECTS).map(([k,s])=>`<option value="${k}" ${filt.subject===k?'selected':''}>${s.short}</option>`).join('')}</select>
+    </div>
+  </div>
+  <div class="card p-5 mt-5">
+    <div class="flex justify-between items-center mb-3"><div id="bankInfo" class="text-sm"></div>
+      <button id="bulkDel" onclick="bulkDelete()" class="bg-maroon text-white px-4 py-1.5 rounded-lg text-sm font-bold disabled:opacity-40" disabled>ลบที่เลือก</button></div>
+    <div class="overflow-auto"><table class="w-full text-sm">
+      <thead><tr class="border-b-2 border-khaki text-left"><th class="p-2 w-8"><input type="checkbox" id="chkAll" onchange="toggleAll(this.checked)"></th>
+        <th class="p-2">id</th><th class="p-2">ชุด</th><th class="p-2">วิชา</th><th class="p-2">โจทย์</th><th class="p-2">เฉลย</th><th class="p-2">สถานะ</th><th class="p-2 text-right">จัดการ</th></tr></thead>
+      <tbody id="bankBody"></tbody></table></div>
+    <div class="text-center mt-3"><button id="moreBtn" onclick="showLimit+=200;renderBankTable()" class="btn-o hidden">แสดงเพิ่ม</button></div>
+  </div>`;
+}
+function filteredBank(){
+  const s=normText(filt.q);
+  return getBank().filter(x=>(filt.set==='all'||String(x.set)===filt.set)&&(filt.subject==='all'||x.subject===filt.subject)
+      &&(filt.issue==='all'||(_issues[x.id]||[]).includes(filt.issue))&&(!s||normText(x.id+x.question+x.choices.join('|')).includes(s)))
+    .sort((a,b)=>(a.set-b.set)||a.id.localeCompare(b.id));
+}
+function renderBankTable(){
+  const body=$('#bankBody'); if(!body) return;
+  const ids=new Set(getBank().map(q=>q.id)); [...selected].forEach(id=>{ if(!ids.has(id)) selected.delete(id); });
+  const list=_filtered=filteredBank();
+  body.innerHTML=list.slice(0,showLimit).map(q=>`<tr class="border-b border-khaki-light hover:bg-khaki-light/40 align-top">
+    <td class="p-2"><input type="checkbox" ${selected.has(q.id)?'checked':''} onchange="toggleSel('${esc(q.id)}',this.checked)"></td>
+    <td class="p-2 font-mono text-xs whitespace-nowrap">${esc(q.id)}</td>
+    <td class="p-2 text-center">${q.set||'กลาง'}</td>
+    <td class="p-2 whitespace-nowrap">${SUBJECTS[q.subject].short}</td>
+    <td class="p-2">${esc(q.question)}</td>
+    <td class="p-2 text-emerald-700">${esc(q.choices[q.answer])}</td>
+    <td class="p-2">${(_issues[q.id]||[]).map(k=>`<span class="inline-block text-[11px] px-2 py-0.5 rounded bg-red-50 text-maroon mr-1 mb-1 whitespace-nowrap">${ISSUE[k]}</span>`).join('')}</td>
+    <td class="p-2 whitespace-nowrap text-right"><button onclick="openEditor('${esc(q.id)}')" class="underline font-bold">แก้ไข</button><button onclick="deleteQ('${esc(q.id)}')" class="underline text-maroon ml-3">ลบ</button></td>
+  </tr>`).join('') || `<tr><td colspan="8" class="p-6 text-center text-khaki-dark">ไม่พบข้อสอบ</td></tr>`;
+  $('#bankInfo').textContent=`พบ ${list.length} ข้อ · เลือก ${selected.size} ข้อ`+(list.length>showLimit?` · แสดง ${showLimit} ข้อแรก`:'');
+  $('#bulkDel').disabled=!selected.size; $('#expCnt').textContent=list.length;
+  $('#chkAll').checked=list.length>0&&list.every(q=>selected.has(q.id));
+  $('#moreBtn').classList.toggle('hidden',list.length<=showLimit);
+}
+function setIssue(k){ filt.issue=filt.issue===k?'all':k; showLimit=200; render(); }
+function toggleSel(id,on){ on?selected.add(id):selected.delete(id); renderBankTable(); }
+function toggleAll(on){ _filtered.forEach(q=>on?selected.add(q.id):selected.delete(q.id)); renderBankTable(); }
+function cleanupRefs(ids){
+  const set=new Set(ids); LS.set(K.bm,LS.get(K.bm,[]).filter(x=>!set.has(x)));
+  const st=LS.get(K.stats,{}); ids.forEach(id=>delete st[id]); LS.set(K.stats,st);
+}
+function deleteQ(id){ if(!confirm(`ลบข้อสอบ ${id}?`)) return; saveBank(getBank().filter(q=>q.id!==id)); cleanupRefs([id]); selected.delete(id); render(); toast('ลบแล้ว'); }
+function bulkDelete(){
+  if(!selected.size||!confirm(`ลบข้อสอบที่เลือก ${selected.size} ข้อ?`)) return;
+  const ids=[...selected]; saveBank(getBank().filter(q=>!selected.has(q.id))); cleanupRefs(ids); selected.clear(); render(); toast(`ลบแล้ว ${ids.length} ข้อ`);
+}
+function exportBank(t){
+  const list=_filtered.length?_filtered:getBank(), cq=s=>'"'+String(s??'').replace(/"/g,'""')+'"';
+  const data = t==='csv'
+    ? '\uFEFF'+['id,set,subject,difficulty,question,choice_a,choice_b,choice_c,choice_d,answer,explanation,fixed_order',
+        ...list.map(q=>[cq(q.id),q.set,q.subject,q.difficulty||2,cq(q.question),...q.choices.map(cq),LABELS[q.answer],cq(q.explanation),q.fixed?1:0].join(','))].join('\r\n')
+    : JSON.stringify({questions:list.map(q=>({id:q.id,set:q.set,subject:q.subject,difficulty:q.difficulty||2,question:q.question,choices:q.choices,answer:LABELS[q.answer],explanation:q.explanation,fixed_order:!!q.fixed}))},null,2);
+  download(data,`nco_bank_${today()}.${t}`,t==='csv'?'text/csv;charset=utf-8':'application/json');
+}
+
+/* =====================================================================
+   15) ADMIN — ADD / EDIT MODAL
+   ===================================================================== */
+let editing=null;
+function openEditor(id=null){
+  const q=id?getBank().find(x=>x.id===id):null;
+  editing={ orig:id, q: q?JSON.parse(JSON.stringify(q)) : { id:'', set:filt.set!=='all'?+filt.set:1, difficulty:2, subject:filt.subject!=='all'?filt.subject:'it',
+                                                          question:'', choices:['','','',''], answer:0, explanation:'', fixed:false } };
+  const e=editing.q;
+  $('#modal').innerHTML=`<div class="fixed inset-0 bg-navy/60 z-50 overflow-auto p-4" onclick="if(event.target===this)closeEditor()">
+   <div class="bg-white rounded-2xl max-w-3xl mx-auto my-4 p-6 shadow-2xl">
+    <h3 class="font-head text-xl font-bold mb-4">${id?'แก้ไขข้อสอบ':'เพิ่มข้อสอบใหม่'}</h3>
+    <div class="grid grid-cols-2 md:grid-cols-4 gap-3">
+      <div class="col-span-2"><label class="lbl">id</label><input id="e_id" class="inp" value="${esc(e.id)}" placeholder="เว้นว่างให้ระบบสร้างให้"></div>
+      <div><label class="lbl">ชุดที่</label><select id="e_set" class="inp">${[...Array(11)].map((_,i)=>`<option value="${i}" ${+e.set===i?'selected':''}>${i||'0 (คลังกลาง)'}</option>`).join('')}</select></div>
+      <div><label class="lbl">ความยาก</label><select id="e_diff" class="inp">${[1,2,3].map(d=>`<option value="${d}" ${+(e.difficulty||2)===d?'selected':''}>${d} ${DIFF[d]}</option>`).join('')}</select></div>
+      <div class="col-span-2 md:col-span-4"><label class="lbl">วิชา</label><select id="e_sub" class="inp">${Object.entries(SUBJECTS).map(([k,s])=>`<option value="${k}" ${e.subject===k?'selected':''}>${s.name}</option>`).join('')}</select></div>
+      <div class="col-span-2 md:col-span-4"><label class="lbl">โจทย์</label><textarea id="e_q" rows="3" class="inp">${esc(e.question)}</textarea></div>
+    </div>
+    <div class="grid md:grid-cols-2 gap-3 mt-3">${[0,1,2,3].map(i=>`<div>
+      <label class="lbl flex items-center gap-2 cursor-pointer"><input type="radio" name="e_ans" value="${i}" ${e.answer===i?'checked':''} onchange="markAns(${i})"> ตัวเลือก ${LABELS[i]}
+        <span id="ansTag${i}" class="text-emerald-700 text-xs ${e.answer===i?'':'hidden'}">(เฉลย)</span></label>
+      <input id="e_c${i}" class="inp ${e.answer===i?'ans':''}" value="${esc(e.choices[i])}"></div>`).join('')}</div>
+    <div class="mt-3"><label class="lbl">คำอธิบายเฉลย (ห้ามอ้าง "ข้อ ก/ข/ค/ง")</label>
+      <textarea id="e_exp" rows="5" class="inp" oninput="checkExp()">${esc(e.explanation)}</textarea>
+      <div id="e_warn" class="text-xs text-maroon mt-1"></div></div>
+    <label class="flex items-center gap-2 mt-3 text-sm cursor-pointer"><input type="checkbox" id="e_fixed" ${e.fixed?'checked':''} onchange="checkExp()"> ห้ามสลับช้อยส์ข้อนี้
+      <span class="text-xs text-khaki-dark">(ใช้กับข้อที่มี "ข้อ ก และ ข ถูก" หรือ "ถูกทุกข้อ")</span></label>
+    <div class="mt-3 bg-khaki-light/60 rounded-xl p-3"><button onclick="previewShuffle()" class="btn-o text-sm">ทดลองสลับช้อยส์</button><div id="e_preview" class="text-sm mt-2"></div></div>
+    <div id="e_err" class="text-sm text-maroon mt-3"></div>
+    <div class="flex justify-end gap-2 mt-4"><button onclick="closeEditor()" class="btn-o">ยกเลิก</button>
+      <button onclick="saveEditor()" class="bg-navy text-white font-bold px-6 py-2 rounded-lg hover:bg-navy-light">บันทึก</button></div>
+   </div></div>`;
+  checkExp(); setTimeout(()=>$('#e_q').focus(),0);
+}
+function closeEditor(){ $('#modal').innerHTML=''; editing=null; }
+function markAns(i){ [0,1,2,3].forEach(j=>{ $('#e_c'+j).classList.toggle('ans',j===i); $('#ansTag'+j).classList.toggle('hidden',j!==i); }); }
+function readEditor(){
+  return { id:$('#e_id').value.trim(), set:+$('#e_set').value, difficulty:+$('#e_diff').value, subject:$('#e_sub').value, question:$('#e_q').value.trim(),
+           choices:[0,1,2,3].map(i=>$('#e_c'+i).value.trim()), answer:+document.querySelector('input[name=e_ans]:checked').value,
+           explanation:$('#e_exp').value.trim(), fixed:$('#e_fixed').checked };
+}
+function checkExp(){
+  $('#e_warn').textContent = !$('#e_fixed').checked && LETTER_REF.test($('#e_exp').value)
+    ? '⚠ คำอธิบายอ้างตัวอักษรช้อยส์ เมื่อระบบสลับตำแหน่งจะไม่ตรงกับคำตอบ ให้อ้างเนื้อหาคำตอบแทน (หรือติ๊ก "ห้ามสลับช้อยส์")' : '';
+}
+function previewShuffle(){
+  const q=readEditor(), el=$('#e_preview');
+  if(q.choices.some(c=>!c)) return el.innerHTML='<span class="text-maroon">กรอกตัวเลือกให้ครบ 4 ตัวก่อน</span>';
+  const s=shuffleChoices(q);
+  el.innerHTML=(q.fixed?'<div class="text-xs mb-1 text-khaki-dark">ข้อนี้ตั้งค่าห้ามสลับ ลำดับจึงคงเดิม</div>':'<div class="text-xs mb-1 text-khaki-dark">ตัวอย่างลำดับที่ผู้สอบอาจเห็น (กดซ้ำเพื่อสุ่มใหม่)</div>')
+    + s.choices.map((c,i)=>`<div class="${i===s.answer?'text-emerald-700 font-bold':''}">${LABELS[i]}. ${esc(c)} ${i===s.answer?'✔ เฉลย':''}</div>`).join('');
+}
+function saveEditor(){
+  const q=readEditor(), err=m=>{ $('#e_err').textContent=m; };
+  if(!q.question) return err('กรุณากรอกโจทย์');
+  if(q.choices.some(c=>!c)) return err('กรุณากรอกตัวเลือกให้ครบ 4 ตัว');
+  if(new Set(q.choices.map(normText)).size<4) return err('มีตัวเลือกซ้ำกัน กรุณาแก้ไข');
+  if(!q.fixed && LETTER_REF.test(q.explanation) && !confirm('คำอธิบายอ้างตัวอักษรช้อยส์ ซึ่งจะไม่ตรงเมื่อสลับช้อยส์\nยืนยันบันทึกหรือไม่?')) return;
+  const bank=[...getBank()];
+  q.id=cleanId(q.id)||nextId(q.set,q.subject,bank);
+  if(q.id!==editing.orig && bank.some(x=>x.id===q.id)) return err(`id "${q.id}" มีอยู่แล้วในคลัง`);
+  if(editing.orig){
+    bank[bank.findIndex(x=>x.id===editing.orig)]=q;
+    if(q.id!==editing.orig){                                   // เปลี่ยน id → ย้าย Bookmark/สถิติตาม
+      LS.set(K.bm,LS.get(K.bm,[]).map(x=>x===editing.orig?q.id:x));
+      const st=LS.get(K.stats,{}); if(st[editing.orig]){ st[q.id]=st[editing.orig]; delete st[editing.orig]; LS.set(K.stats,st); }
+    }
+  } else bank.push(q);
+  saveBank(bank); const wasEdit=!!editing.orig; closeEditor(); render(); toast(wasEdit?'บันทึกการแก้ไขแล้ว':`เพิ่มข้อ ${q.id} แล้ว`);
+}
+
+/* =====================================================================
+   16) ADMIN — UPLOAD CSV / JSON
+   ===================================================================== */
+const TPL_CSV = `id,set,subject,difficulty,question,choice_a,choice_b,choice_c,choice_d,answer,explanation,fixed_order
+S1-IT-101,1,it,1,"ปุ่มลัดใดใช้คัดลอกข้อความ","Ctrl+C","Ctrl+V","Ctrl+X","Ctrl+Z",ก,"Ctrl+C = Copy, Ctrl+V = Paste, Ctrl+X = Cut, Ctrl+Z = Undo",0
+S1-SAR-101,1,saraban,2,"หนังสือภายนอกใช้กระดาษชนิดใด","กระดาษตราครุฑ","กระดาษบันทึกข้อความ","กระดาษธรรมดา","กระดาษแบบฟอร์ม",ก,"หนังสือภายนอกใช้กระดาษตราครุฑ ส่วนหนังสือภายในใช้กระดาษบันทึกข้อความ",0
+S2-LAW-101,2,law,2,"ข้อใดถูกต้องเกี่ยวกับรัฐธรรมนูญฉบับปัจจุบัน","ประกาศใช้ พ.ศ. 2560","เป็นกฎหมายสูงสุด","ข้อ ก และ ข ถูก","ไม่มีข้อใดถูก",ค,"รัฐธรรมนูญ พ.ศ. 2560 เป็นกฎหมายสูงสุด ข้อนี้ต้องตั้ง fixed_order=1 เพราะช้อยส์อ้างอิงตำแหน่ง",1
+S2-ENG-101,2,english,1,"He ___ a police officer.","is","are","am","be",A,"ประธานเอกพจน์ He ใช้ verb to be ว่า is",0
+,3,ภาษาไทย,3,"คำใดสะกดถูกต้อง","ผลัดเปลี่ยน","ผัดเปลี่ยน","พลัดเปลี่ยน","ผลัดเปลียน",1,"ผลัด แปลว่า เปลี่ยน จึงเขียนว่า ผลัดเปลี่ยน (เว้น id ว่างได้ ระบบจะสร้างให้)",0`;
+const TPL_JSON = { questions:[
+  {id:'S1-IT-201',set:1,subject:'it',difficulty:1,question:'อุปกรณ์ใดเป็นหน่วยรับข้อมูล (Input Unit)',choices:['Keyboard','Monitor','Speaker','Printer'],answer:'ก',explanation:'Keyboard เป็น Input ส่วน Monitor, Speaker, Printer เป็น Output',fixed_order:false},
+  {id:'S1-GEN-201',set:1,subject:'math',difficulty:1,question:'25% ของ 480 เท่ากับเท่าใด',choices:['100','120','140','160'],answer:'ข',explanation:'25% = 1/4 → 480 ÷ 4 = 120',fixed_order:false}
+]};
+const SUBJECT_ALIASES={ math:['math','คำนวณ','คณิต','ความสามารถทั่วไป'], thai:['thai','ภาษาไทย','ไทย'], it:['it','computer','คอม','เทคโนโลยี','สารสนเทศ'],
+                        saraban:['saraban','สารบรรณ'], law:['law','กฎหมาย'], english:['english','eng','อังกฤษ'] };
+function normSubject(s){ s=String(s||'').trim().toLowerCase(); if(SUBJECTS[s]) return s;
+  for(const [k,al] of Object.entries(SUBJECT_ALIASES)) if(al.some(a=>s.includes(a))) return k; return null; }
+function normAnswer(a){ const s=String(a??'').trim().toUpperCase().replace('.','');
+  const m={'ก':0,'ข':1,'ค':2,'ง':3,'A':0,'B':1,'C':2,'D':3,'1':0,'2':1,'3':2,'4':3}; return s in m?m[s]:-1; }
+function parseCSV(text){
+  text=text.replace(/^\uFEFF/,''); const rows=[]; let row=[], f='', q=false;
+  for(let i=0;i<text.length;i++){ const c=text[i];
+    if(q){ if(c==='"'){ if(text[i+1]==='"'){ f+='"'; i++; } else q=false; } else f+=c; }
+    else if(c==='"') q=true;
+    else if(c===','){ row.push(f); f=''; }
+    else if(c==='\n'||c==='\r'){ if(c==='\r'&&text[i+1]==='\n') i++; row.push(f); rows.push(row); row=[]; f=''; }
+    else f+=c; }
+  if(f!==''||row.length){ row.push(f); rows.push(row); }
+  return rows.filter(r=>r.some(x=>x.trim()!==''));
+}
+function normalizeQ(o){
+  const subject=normSubject(o.subject); if(!subject) return {error:`subject "${o.subject}" ไม่ถูกต้อง`};
+  if(!String(o.question||'').trim()) return {error:'ไม่มีโจทย์ (question)'};
+  const choices=(Array.isArray(o.choices)?o.choices:[o.choice_a,o.choice_b,o.choice_c,o.choice_d]).map(x=>String(x??'').trim());
+  if(choices.length!==4||choices.some(c=>!c)) return {error:'ต้องมีตัวเลือกครบ 4 ตัว'};
+  const answer=normAnswer(o.answer); if(answer<0) return {error:`answer "${o.answer}" ไม่ถูกต้อง (ใช้ ก/ข/ค/ง หรือ A–D หรือ 1–4)`};
+  const set=parseInt(o.set)||0, d=parseInt(o.difficulty);
+  return { q:{ id:cleanId(o.id), set:(set>=1&&set<=10)?set:0, subject, difficulty:[1,2,3].includes(d)?d:2, question:String(o.question).trim(),
+    choices, answer, explanation:String(o.explanation||'').trim(), fixed:['1','true','yes','y'].includes(String(o.fixed_order??o.fixed??'').toLowerCase()) } };
+}
+async function handleFile(file){
+  if(!file) return; let raw=[];
+  try{
+    const text=await file.text();
+    if(file.name.toLowerCase().endsWith('.json')){ const j=JSON.parse(text); raw=Array.isArray(j)?j:(j.questions||[]); }
+    else { const rows=parseCSV(text); const h=rows[0].map(x=>x.trim().toLowerCase()); raw=rows.slice(1).map(r=>Object.fromEntries(h.map((k,i)=>[k,(r[i]??'').trim()]))); }
+  }catch(e){ uploadMsg=`<div class="text-maroon">อ่านไฟล์ไม่สำเร็จ: ${esc(e.message)}</div>`; return render(); }
+  const map=new Map(getBank().map(q=>[q.id,q])), errs=[]; let added=0, updated=0;
+  raw.forEach((o,i)=>{ const r=normalizeQ(o); if(r.error) return errs.push(`แถว/ข้อที่ ${i+1}: ${r.error}`);
+    const q=r.q; if(!q.id) q.id=nextId(q.set,q.subject,[...map.values()]);
+    map.has(q.id)?updated++:added++; map.set(q.id,q); });
+  saveBank([...map.values()]);
+  uploadMsg=`<div class="text-emerald-700 font-bold">✔ นำเข้าสำเร็จ: เพิ่มใหม่ ${added} ข้อ • เขียนทับ ${updated} ข้อ</div>${errs.length?`<div class="text-maroon mt-1">✘ ข้าม ${errs.length} รายการ:<br>${errs.slice(0,20).map(esc).join('<br>')}</div>`:''}`;
+  render();
+}
+function downloadTemplate(t){ download(t==='csv'?'\uFEFF'+TPL_CSV:JSON.stringify(TPL_JSON,null,2), `nco_questions_template.${t}`, t==='csv'?'text/csv;charset=utf-8':'application/json'); }
+function genMathBank(){
+  const map=new Map(getBank().map(q=>[q.id,q])); let n=0;
+  for(let s=1;s<=10;s++) for(let i=0;i<20;i++){ const q=genMath(s,i); if(!map.has(q.id)){ map.set(q.id,q); n++; } }
+  saveBank([...map.values()]); uploadMsg=`<div class="text-emerald-700 font-bold">✔ เพิ่มโจทย์คำนวณอัตโนมัติ ${n} ข้อ${n?'':' (มีครบแล้ว)'}</div>`; render();
+}
+function viewUpload(){
+  const bank=getBank();
+  return `<div class="grid md:grid-cols-2 gap-5">
+    <div class="card p-5"><h2 class="font-head text-xl font-bold mb-3">⬆️ อัปโหลดชุดข้อสอบ (.CSV / .JSON)</h2>
+      <label class="block border-2 border-dashed border-gold rounded-xl p-8 text-center cursor-pointer hover:bg-khaki-light">
+        <div class="text-4xl">📂</div><div class="font-bold mt-2">คลิกเพื่อเลือกไฟล์ .csv หรือ .json</div>
+        <div class="text-xs text-khaki-dark">ถ้า id ซ้ำกับข้อเดิม ระบบจะเขียนทับ • ถ้าเว้น id ว่าง ระบบจะสร้างให้</div>
+        <input type="file" accept=".csv,.json" class="hidden" onchange="handleFile(this.files[0]);this.value=''"></label>
+      <div class="mt-3 text-sm">${uploadMsg}</div>
+      <div class="flex flex-wrap gap-2 mt-4">
+        <button onclick="downloadTemplate('csv')" class="bg-navy text-white px-4 py-2 rounded-lg text-sm">ดาวน์โหลด Template CSV</button>
+        <button onclick="downloadTemplate('json')" class="bg-navy-light text-white px-4 py-2 rounded-lg text-sm">ดาวน์โหลด Template JSON</button>
+        <button onclick="genMathBank()" class="btn-o text-sm">เติมโจทย์คำนวณอัตโนมัติ (200 ข้อ)</button>
+      </div>
+      <div class="text-xs mt-4 bg-khaki-light rounded-lg p-3 leading-relaxed">
+        <b>คอลัมน์:</b> id, set (1–10 หรือ 0 = คลังกลาง), subject (math / thai / it / saraban / law / english หรือชื่อวิชาภาษาไทย), difficulty (1–3), question, choice_a–choice_d, answer (ก/ข/ค/ง, A–D หรือ 1–4), explanation, fixed_order (1 = ห้ามสลับช้อยส์)<br>
+        <b>หมายเหตุ:</b> ถ้าบันทึกจาก Excel ให้เลือก "CSV UTF-8" เพื่อไม่ให้ภาษาไทยเพี้ยน</div>
+    </div>
+    <div class="card p-5"><h3 class="font-bold mb-2">สถานะคลังข้อสอบ (เป้าหมาย 10 ชุด × 150 ข้อ)</h3>
+      ${Object.entries(SUBJECTS).map(([k,s])=>{const have=bank.filter(q=>q.subject===k).length,need=s.quota*10;return `
+        <div class="mb-3"><div class="flex justify-between text-sm"><span>${s.name}</span><span>${have}/${need}</span></div>${bar(pct(have,need),have>=need?'bg-emerald-600':'bg-gold')}</div>`}).join('')}
+      <p class="text-xs text-khaki-dark">ถ้าคลังยังไม่ครบ ระบบจะนำข้อเดิมมาใช้ซ้ำโดยสลับตำแหน่งช้อยส์ให้</p>
+    </div></div>`;
+}
+
+/* =====================================================================
+   17) ADMIN — SETTINGS & BACKUP
+   ===================================================================== */
+function viewSettings(){
+  const s=getSettings(), ratios=[0,0.1,0.15,0.2,0.25,0.3,0.4];
+  const opt=v=>ratios.map(r=>`<option value="${r}" ${Math.abs(r-v)<1e-9?'selected':''}>${Math.round(r*100)}%</option>`).join('');
+  const kb=Object.values(K).reduce((a,k)=>a+(localStorage.getItem(k)||'').length,0)*2/1024;
+  return `<div class="grid md:grid-cols-2 gap-5">
+    <div class="card p-6"><h2 class="font-head text-xl font-bold mb-4">ตั้งค่าการสอบ</h2>
+      <label class="lbl">ชื่อผู้สอบ (แสดงบนแดชบอร์ด)</label><input id="s_name" class="inp mb-3" value="${esc(s.name)}" placeholder="เช่น ว่าที่ ส.ต.ต. สมชาย">
+      <div class="grid grid-cols-2 gap-3 mb-3">
+        <div><label class="lbl">วันสอบจริง</label><input id="s_date" type="date" class="inp" value="${esc(s.examDate)}"></div>
+        <div><label class="lbl">เวลาเริ่มสอบ</label><input id="s_time" type="time" class="inp" value="${esc(s.examTime)}"></div></div>
+      <label class="lbl">เวลาสอบจำลอง (นาที)</label><input id="s_min" type="number" min="10" max="300" class="inp mb-3" value="${s.mockMinutes}">
+      <div class="grid grid-cols-2 gap-3 mb-3">
+        <div><label class="lbl">ถามซ้ำในโหมดสอบจำลอง</label><select id="s_rm" class="inp">${opt(s.reviewMock)}</select></div>
+        <div><label class="lbl">ถามซ้ำในโหมดฝึกซ้อม</label><select id="s_rp" class="inp">${opt(s.reviewPractice)}</select></div></div>
+      <label class="lbl">รหัส PIN หลังบ้าน</label><input id="s_pin" class="inp" value="${esc(s.pin)}" autocomplete="off">
+      <div class="text-xs text-khaki-dark mt-1 mb-4">อย่างน้อย 4 ตัวอักษร</div>
+      <button onclick="saveSettings()" class="w-full bg-navy text-white font-bold py-2.5 rounded-lg hover:bg-navy-light">บันทึกการตั้งค่า</button>
+    </div>
+    <div class="card p-6 h-fit"><h2 class="font-head text-xl font-bold mb-2">ข้อมูลและการสำรอง</h2>
+      <p class="text-sm mb-4">ข้อมูลทั้งหมดเก็บในเบราว์เซอร์เครื่องนี้เท่านั้น ถ้าล้างประวัติเบราว์เซอร์ ข้อมูลจะหาย ควร Backup เป็นประจำ</p>
+      <button onclick="backupAll()" class="w-full bg-gold text-navy font-bold py-2.5 rounded-lg mb-3 hover:bg-gold-light">Backup ทั้งหมด (ข้อสอบ + ความคืบหน้า)</button>
+      <label class="block w-full btn-o text-center cursor-pointer mb-4">กู้คืนจากไฟล์ Backup<input type="file" accept=".json" class="hidden" onchange="restoreBackup(this.files[0]);this.value=''"></label>
+      <hr class="border-khaki-light mb-4">
+      <button onclick="clearProgress()" class="w-full bg-white border border-maroon text-maroon font-bold py-2.5 rounded-lg mb-3 hover:bg-red-50">ล้างความคืบหน้าและประวัติ</button>
+      <button onclick="clearEverything()" class="w-full bg-maroon text-white font-bold py-2.5 rounded-lg hover:bg-maroon-light">ล้างข้อมูลทั้งหมด</button>
+      <div class="text-xs text-khaki-dark mt-4">คลังข้อสอบ ${getBank().length} ข้อ • ใช้พื้นที่ประมาณ ${kb.toFixed(0)} KB จาก ~5,000 KB</div>
+    </div></div>`;
+}
+function saveSettings(){
+  const mm=parseInt($('#s_min').value), pin=$('#s_pin').value.trim(), date=$('#s_date').value;
+  if(!date) return toast('กรุณาเลือกวันสอบ',true);
+  if(!(mm>=10&&mm<=300)) return toast('เวลาสอบจำลองต้องอยู่ระหว่าง 10–300 นาที',true);
+  if(pin.length<4) return toast('PIN ต้องมีอย่างน้อย 4 ตัวอักษร',true);
+  LS.set(K.settings,{ name:$('#s_name').value.trim(), examDate:date, examTime:$('#s_time').value||'09:00', mockMinutes:mm,
+                      reviewMock:+$('#s_rm').value, reviewPractice:+$('#s_rp').value, pin });
+  render(); toast('บันทึกการตั้งค่าแล้ว');
+}
+function backupAll(){
+  const data={}; Object.values(K).forEach(k=>{ const v=localStorage.getItem(k); if(v!==null) data[k]=JSON.parse(v); });
+  download(JSON.stringify({app:'nco-exam-2569',version:2,exportedAt:new Date().toISOString(),data},null,2),`nco_backup_${today()}.json`,'application/json');
+  toast('ดาวน์โหลดไฟล์ Backup แล้ว');
+}
+async function restoreBackup(file){
+  if(!file) return;
+  try{
+    const j=JSON.parse(await file.text());
+    if(j.app!=='nco-exam-2569'||!j.data) throw new Error('ไม่ใช่ไฟล์ Backup ของระบบนี้');
+    if(!confirm(`กู้คืนข้อมูลจาก Backup วันที่ ${new Date(j.exportedAt).toLocaleString('th-TH')}?\nข้อมูลปัจจุบันจะถูกแทนที่ทั้งหมด`)) return;
+    Object.values(K).forEach(k=>localStorage.removeItem(k));
+    Object.entries(j.data).forEach(([k,v])=>{ if(Object.values(K).includes(k)) LS.set(k,v); });
+    _bank=null; S=LS.get(K.session,null); selected.clear(); render(); toast('กู้คืนข้อมูลสำเร็จ');
+  }catch(e){ toast('กู้คืนไม่สำเร็จ: '+e.message,true); }
+}
+function clearProgress(){
+  if(!confirm('ล้างสถิติ ประวัติการสอบ Bookmark และข้อสอบที่ทำค้าง?\n(คลังข้อสอบและการตั้งค่ายังอยู่)')) return;
+  [K.stats,K.hist,K.bm,K.last,K.session].forEach(k=>localStorage.removeItem(k)); S=null; render(); toast('ล้างความคืบหน้าแล้ว');
+}
+function clearEverything(){
+  if(prompt('การล้างข้อมูลทั้งหมดจะลบคลังข้อสอบ การตั้งค่า (รวม PIN) และความคืบหน้าทั้งหมด\nพิมพ์คำว่า "ยืนยัน" เพื่อดำเนินการ')!=='ยืนยัน') return;
+  Object.values(K).forEach(k=>localStorage.removeItem(k)); _bank=null; S=null; selected.clear(); adminTab='bank';
+  render(); toast('ล้างข้อมูลทั้งหมดแล้ว ระบบกลับสู่ค่าเริ่มต้น');
+}
+
+/* =====================================================================
+   18) GLOBAL TICK & KEYBOARD
+   ===================================================================== */
+setInterval(()=>{
+  const d=$('#cd-d');
+  if(d){ const diff=Math.max(0,examDateObj()-Date.now())/1000;
+    d.textContent=Math.floor(diff/86400); $('#cd-h').textContent=String(Math.floor(diff%86400/3600)).padStart(2,'0');
+    $('#cd-m').textContent=String(Math.floor(diff%3600/60)).padStart(2,'0'); $('#cd-s').textContent=String(Math.floor(diff%60)).padStart(2,'0'); }
+  if(S && S.mode==='mock'){
+    const left=Math.round((S.endAt-Date.now())/1000), t=$('#timer');
+    if(t){ t.textContent=fmtTime(left); if(left<=600) t.classList.add('animate-pulse','text-red-300'); }
+    if(left<=0) submitExam(true);
+  }
+},1000);
+document.addEventListener('keydown',e=>{
+  if(editing){ if(e.key==='Escape') closeEditor(); return; }
+  if(route!=='exam'||!S||['INPUT','SELECT','TEXTAREA'].includes(e.target.tagName)) return;
+  if(['1','2','3','4'].includes(e.key)) choose(+e.key-1);
+  else if(e.key==='ArrowRight') nav(1);
+  else if(e.key==='ArrowLeft') nav(-1);
+  else if(e.key.toLowerCase()==='b') toggleBm(S.qs[S.idx].id);
+});
+render();
+</script>
+</body>
+</html>
